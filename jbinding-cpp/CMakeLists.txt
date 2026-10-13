@@ -509,6 +509,14 @@ IF(CMAKE_COMPILER_IS_GNUCXX)
     IF(CMAKE_CXX_COMPILER_VERSION VERSION_LESS "6.0")
         SET(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -std=gnu++11")
     ENDIF()
+    # SevenZipJBinding.h pulls in 7-Zip's UI headers, which declare final implementations of the
+    # archive callback interfaces (COpenCallbackImp, CArchiveExtractCallback) whose .cpp files jbinding
+    # does NOT link. GCC 16 speculatively devirtualizes calls through those interfaces by comparing the
+    # vptr with the final class's vtable -> 'undefined reference to vtable for COpenCallbackImp'
+    # (seen with MSYS2 MinGW-w64 GCC 16.2). The option exists since GCC 4.9.
+    IF(NOT CMAKE_CXX_COMPILER_VERSION VERSION_LESS "4.9")
+        SET(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -fno-devirtualize-speculatively")
+    ENDIF()
 ENDIF(CMAKE_COMPILER_IS_GNUCXX)
 # Same for old Clang (e.g. the macOS cross toolchain multiarch/crossbuild = Clang 3.8, which defaults
 # to C++03): the binding needs C++11 (noexcept / Z7_override), else "expected ';'" on those keywords.
