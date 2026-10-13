@@ -30,6 +30,9 @@ on:
       rounds:
         description: 'Benchmark rounds (interleaved)'
         default: '7'
+      only:
+        description: 'Comma-separated builds, e.g. gcc16-avx2-lto,clang23-avx2-lto (empty = all)'
+        default: ''
   workflow_call:
     inputs:
       only:

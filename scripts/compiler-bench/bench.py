@@ -101,7 +101,7 @@ def main():
     ap.add_argument("--jni-classes", help="dir with compiled JniBench.class (skip JNI bench if absent)")
     ap.add_argument("--corpus", nargs="*", default=[])
     ap.add_argument("--corpus-mib", type=int, default=32)
-    ap.add_argument("--baseline", default="gcc17-base")
+    ap.add_argument("--baseline", default="gcc17-base,gcc16-base", help="first present build wins")
     ap.add_argument("--out", required=True)
     a = ap.parse_args()
     os.makedirs(a.out, exist_ok=True)
@@ -115,7 +115,7 @@ def main():
     for b in builds:
         p = os.path.join(a.builds_dir, b, "info.txt")
         info[b] = open(p, encoding="utf-8").read().strip() if os.path.exists(p) else ""
-    base = a.baseline if a.baseline in builds else builds[0]
+    base = next((x for x in a.baseline.split(",") if x in builds), builds[0])
 
     raw = {"lzma1": {b: [] for b in builds}, "lzmaN": {b: [] for b in builds},
            "methods": {b: [] for b in builds}, "jni": {b: [] for b in builds}}
