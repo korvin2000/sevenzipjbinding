@@ -58,7 +58,7 @@ jobs:
   platform-zips:
     name: all platform zips
     needs: [windows-x64, windows-arm64, linux-musl, macos, freebsd]
-    if: always()
+    if: ${{ !cancelled() }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/download-artifact@v4
