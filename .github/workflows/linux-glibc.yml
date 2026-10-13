@@ -1,0 +1,123 @@
+name: Linux glibc build & test
+
+# Build the native Linux glibc libraries (Linux-amd64, Linux-arm64) with Clang from apt.llvm.org and run
+# the full JUnit suite natively on each arch - amd64 on ubuntu-22.04, arm64 on the ubuntu-22.04-arm runner
+# (free for public repos), no QEMU. Built on Ubuntu 22.04 so the .so needs only glibc 2.35 (the lowest
+# glibc of the hosted runners); STATIC_BUILD links libgcc + libstdc++ statically, so it NEEDs nothing but
+# glibc's own libraries (verified below - the tests alone would not catch it).
+#   Linux-amd64       -O3 -flto                                   (portable x86-64)
+#   Linux-amd64-avx2  -O3 -march=x86-64-v3 -ffast-math -flto      (benchmark winner, bench-results.md;
+#                     needs AVX2/FMA/BMI2 - Haswell / Zen 1 or newer; drop-in, same jar names)
+#   Linux-arm64       -O3 -flto
+# Linking via lld (Clang LTO needs an LLVM-aware linker). The runner JDK 8 still ships javah.
+#
+# Manual: Actions tab -> "Linux glibc build & test" -> Run workflow, or
+#   gh workflow run linux-glibc.yml --ref master
+# Also called by ci.yml (all platforms).
+on:
+  workflow_dispatch:
+  workflow_call:
+
+permissions:
+  contents: read
+
+env:
+  LLVM_VERSION: "23"   # newest stable apt.llvm.org toolchain (llvm-toolchain-jammy-23)
+
+jobs:
+  build-test:
+    name: ${{ matrix.zip }} (glibc, Clang, native) build + test
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { zip: Linux-amd64,      artifact: linux-amd64,      arch: amd64, runner: ubuntu-22.04,     elf_machine: 'X86-64',  flags: '-O3 -flto' }
+          - { zip: Linux-amd64-avx2, artifact: linux-amd64-avx2, arch: amd64, runner: ubuntu-22.04,     elf_machine: 'X86-64',  flags: '-O3 -march=x86-64-v3 -ffast-math -flto' }
+          - { zip: Linux-arm64,      artifact: linux-arm64,      arch: arm64, runner: ubuntu-22.04-arm, elf_machine: 'AArch64', flags: '-O3 -flto' }
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up JDK 8 (native ${{ matrix.arch }}, needs javah)
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '8'
+
+      - name: Install Clang ${{ env.LLVM_VERSION }} + lld (apt.llvm.org)
+        run: |
+          set -eux
+          curl -fsSL --retry 5 https://apt.llvm.org/llvm-snapshot.gpg.key | sudo tee /etc/apt/trusted.gpg.d/apt.llvm.org.asc > /dev/null
+          echo "deb http://apt.llvm.org/jammy/ llvm-toolchain-jammy-$LLVM_VERSION main" | sudo tee /etc/apt/sources.list.d/llvm.list
+          sudo apt-get update
+          # libstdc++-12-dev: pins the GCC install Clang picks (headers + libstdc++.a for -static-libstdc++)
+          sudo apt-get install -y --no-install-recommends clang-$LLVM_VERSION lld-$LLVM_VERSION libstdc++-12-dev
+
+      - name: Pin CMake 3.x (project predates CMake 4 / CMP0175)
+        uses: jwlawson/actions-setup-cmake@v2
+        with:
+          cmake-version: '3.28.6'
+
+      - name: Toolchain info
+        run: |
+          set -eux
+          uname -m; ldd --version | head -1
+          /usr/lib/llvm-$LLVM_VERSION/bin/clang --version | head -1
+          /usr/lib/llvm-$LLVM_VERSION/bin/ld.lld --version
+          cmake --version | head -1
+          echo "JAVA_HOME=$JAVA_HOME"; "$JAVA_HOME/bin/java" -version
+          ls "$JAVA_HOME/bin/javah"
+
+      - name: Configure + build ${{ matrix.zip }} (${{ matrix.flags }})
+        run: |
+          set -eux
+          LLVM=/usr/lib/llvm-$LLVM_VERSION/bin
+          mkdir build && cd build
+          cmake .. \
+            -DCMAKE_POLICY_VERSION_MINIMUM=3.5 \
+            -DJAVA_SYSTEM=Linux -DJAVA_ARCH=${{ matrix.arch }} \
+            -DCMAKE_C_COMPILER=$LLVM/clang -DCMAKE_CXX_COMPILER=$LLVM/clang++ \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DOPTIMIZATION_FLAGS=-O3 \
+            -DCMAKE_C_FLAGS="${{ matrix.flags }}" -DCMAKE_CXX_FLAGS="${{ matrix.flags }}" \
+            -DCMAKE_SHARED_LINKER_FLAGS=-fuse-ld=lld \
+            -DJAVA_JDK="$JAVA_HOME"
+          make -j"$(nproc)" VERBOSE=1 > build.log 2>&1 || { tail -100 build.log; exit 1; }
+          # effective compile + link command lines of the JNI library
+          grep -m1 -E 'SevenZipJBinding\.cpp' build.log || true
+          grep -m1 -E ' -o lib7-Zip-JBinding\.so' build.log || true
+          make package
+          if [ "${{ matrix.zip }}" != "Linux-${{ matrix.arch }}" ]; then   # avx2: same content, own zip name
+            for z in sevenzipjbinding-*-Linux-${{ matrix.arch }}.zip; do mv "$z" "${z%-Linux-${{ matrix.arch }}.zip}-${{ matrix.zip }}.zip"; done
+          fi
+          echo "== built =="; ls -1 sevenzipjbinding-*-${{ matrix.zip }}.zip
+
+      - name: Verify the .so (${{ matrix.elf_machine }} ELF, NEEDs only glibc, GLIBC floor)
+        run: |
+          set -eux
+          LIB=build/jbinding-cpp/lib7-Zip-JBinding.so
+          file "$LIB"
+          readelf -h "$LIB" | grep -E 'Machine:.*${{ matrix.elf_machine }}'
+          readelf -p .comment "$LIB" || true
+          unzip -l build/sevenzipjbinding-Linux-${{ matrix.arch }}.jar | grep -E ' Linux-${{ matrix.arch }}/lib7-Zip-JBinding\.so$'
+          readelf -d "$LIB" | grep NEEDED
+          if readelf -d "$LIB" | grep NEEDED | grep -vE '\[(libc\.so\.6|libm\.so\.6|libpthread\.so\.0|libdl\.so\.2|librt\.so\.1|ld-linux[^]]*)\]'; then
+            echo "::error::$LIB needs a non-glibc library (dynamic libstdc++/libgcc_s; STATIC_BUILD broken)"; exit 1
+          fi
+          echo "GLIBC symbol versions needed:"; readelf -V "$LIB" | grep -oE 'GLIBC_[0-9]+(\.[0-9]+)+' | sort -uV | tr '\n' ' '; echo
+          echo "GLIBC floor: $(readelf -V "$LIB" | grep -oE 'GLIBC_[0-9]+(\.[0-9]+)+' | sort -uV | tail -1)"
+          # -ffast-math must not pull crtfastmath.o (sets FTZ/DAZ for the whole JVM process on load)
+          if nm "$LIB" | grep -w set_fast_math; then
+            echo "::error::$LIB contains crtfastmath.o"; exit 1
+          fi
+
+      - name: Run tests (ctest, native ${{ matrix.arch }} glibc JVM)
+        run: cd build && ctest --output-on-failure
+
+      - name: Upload ${{ matrix.zip }} platform zip
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.artifact }}
+          path: build/sevenzipjbinding-*-${{ matrix.zip }}.zip
+          if-no-files-found: warn

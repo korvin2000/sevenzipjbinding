@@ -3,7 +3,8 @@ name: Release
 # Builds + tests every CI platform (ci.yml) from the tagged commit and publishes a GitHub release with
 # the per-platform zips, SHA256SUMS.txt and the release notes. Also ships an AVX2-optimized Windows x64
 # zip (Windows-amd64-avx2) built + tested by windows-x64-compilers.yml with the benchmark winner
-# (bench-results.md); the portable Windows-amd64 zip stays the default.
+# (bench-results.md); the portable Windows-amd64 zip stays the default. The Linux glibc zips incl. the
+# AVX2 Linux-amd64-avx2 one come from ci.yml (linux-glibc.yml).
 #
 # How to cut a release (either way):
 #   * Actions tab -> "Release" -> Run workflow -> enter a new tag (e.g. Release-26.03-2.4), tick
@@ -83,6 +84,9 @@ jobs:
             echo "| Windows x64 | \`Windows-amd64\` |"
             echo "| Windows x64, AVX2-optimized (Haswell / Zen 1 or newer) | \`Windows-amd64-avx2\` |"
             echo "| Windows ARM64 | \`Windows-arm64\` |"
+            echo "| Linux x64 (glibc 2.35+) | \`Linux-amd64\` |"
+            echo "| Linux x64 (glibc 2.35+), AVX2-optimized (Haswell / Zen 1 or newer) | \`Linux-amd64-avx2\` |"
+            echo "| Linux ARM64 (glibc 2.35+) | \`Linux-arm64\` |"
             echo "| Linux musl (Alpine) x64 | \`Linux-amd64-musl\` |"
             echo "| Linux musl (Alpine) ARM64 | \`Linux-arm64-musl\` |"
             echo "| macOS universal (Intel + Apple Silicon) | \`AllMac\` |"
@@ -90,13 +94,17 @@ jobs:
             echo "| macOS Apple Silicon only | \`Mac-arm64\` |"
             echo "| FreeBSD x64 | \`FreeBSD-amd64\` |"
             echo
-            echo "Not built by CI (yet): Linux glibc, Windows x86, 32-bit ARM and the AllPlatforms/AllWindows bundles."
+            echo "Not built by CI (yet): Windows x86, 32-bit ARM and the AllPlatforms/AllWindows bundles."
             echo
             echo "**\`Windows-amd64-avx2\`** is a drop-in replacement for \`Windows-amd64\` (same jar names) for x86-64-v3"
             echo "CPUs (AVX2/FMA/BMI2): \`$AVX2_FLAGS\`, $AVX2_COMPILER, cross-built and"
             echo "tested with the full JUnit suite on Windows x64. On CPUs without AVX2 it fails with an illegal"
             echo "instruction - use \`Windows-amd64\` there. GCC 16.2/17 vs Clang 23.1/24 benchmark:"
             echo "\`bench-results-$VERSION.md\`."
+            echo
+            echo "**\`Linux-amd64-avx2\`** is the same drop-in replacement for \`Linux-amd64\`: \`-O3 -march=x86-64-v3 -ffast-math -flto\`,"
+            echo "Clang 23 (apt.llvm.org), built and tested with the full JUnit suite natively on Ubuntu 22.04 x64."
+            echo "The Linux glibc libs (Clang 23, \`-O3 -flto\`) link libgcc/libstdc++ statically and need only glibc 2.35+."
           } > notes.md
           gh release create "$TAG" dist/*.zip dist/SHA256SUMS.txt "dist/ReleaseNotes-$VERSION.txt" \
             "dist/bench-results-$VERSION.md" \
