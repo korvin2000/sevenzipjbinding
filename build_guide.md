@@ -370,6 +370,10 @@ the cross-built binary      interleaved rounds, job summary
   Keep master runs alive with
   `cancel-in-progress: ${{ github.ref != 'refs/heads/master' }}`.
 * Inputs are empty on non-dispatch events. Use defaults like `${{ inputs.rounds || '7' }}`.
+* **Expression gotcha**: comparisons coerce loosely, so `null == false` is **true**. A job guarded by
+  `if: inputs.bench != false` is *skipped* when the input is not defined for that trigger (for
+  example a `workflow_call`-only boolean on a manual run). Compare strings instead:
+  `if: format('{0}', inputs.bench) != 'false'`.
 * Reusable workflows: `on: workflow_call` and `uses: ./.github/workflows/x.yml` (an umbrella CI
   that calls per-platform workflows).
 
@@ -554,6 +558,13 @@ Results (full tables: `bench-results.md` in that project). CI machine: AMD EPYC 
   build (8.5k vs 15.5k MIPS), and single-thread compression varied by about 15%. Only single-thread
   decompression and the per-method speeds were stable (cv ≈1%). Confirming on a second machine was
   essential.
+* **Stable vs nightly** (a third CPU, EPYC 7763 / Zen 3):
+  * GCC 16.2.0 and Clang 23.1.3 (latest releases) match their trunk versions within 0.1-0.4%
+    (codec geomean).
+  * The shipped AVX2 build was switched to stable Clang 23.1.3 (`-O3 -march=x86-64-v3 -ffast-math
+    -flto`). It had the best Java-binding score there, and a released compiler is reproducible.
+  * Nightly compilers are great for *checking build-ability early*. Do not expect free speed from
+    them.
 * **Lessons for other projects:**
   * Measure per workload. Do not expect `-O3`/AVX2 to pay off where the hot loops already dispatch
     on CPUID.

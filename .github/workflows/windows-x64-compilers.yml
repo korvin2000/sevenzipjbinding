@@ -82,6 +82,7 @@ jobs:
             SNAP=$(curl -fsSL --retry 5 https://gcc.gnu.org/pub/gcc/snapshots/LATEST-17/ | grep -oE 'gcc-17-[0-9]{8}' | head -1)
           fi
           test -n "$SNAP"
+          case ",$ONLY," in *,gcc16-*|*,clang23-*) STABLE=true ;; esac   # 'only' may name the stable builds
           tc="{\"name\":\"gcc17\",\"ver\":\"$SNAP\",\"url\":\"https://gcc.gnu.org/pub/gcc/snapshots/${SNAP#gcc-}/$SNAP.tar.xz\"}"
           comps="gcc17 clang-nightly"
           if [ "$STABLE" = "true" ]; then
@@ -99,21 +100,25 @@ jobs:
           echo "gcc_toolchains=$tc" >> "$GITHUB_OUTPUT"
           echo "builds=[${builds%,}]" >> "$GITHUB_OUTPUT"
           echo "clang=$(case "$used" in *clang*) echo true ;; *) echo false ;; esac)" >> "$GITHUB_OUTPUT"
+          llvm=""
+          for c in $used; do case "$c" in clang*) case " $llvm " in *" $c "*) ;; *) llvm="$llvm $c" ;; esac ;; esac; done
+          echo "llvm=$llvm" >> "$GITHUB_OUTPUT"
           cat "$GITHUB_OUTPUT"
 
       - name: Download llvm-mingw once (the nightly asset is replaced daily)
         if: steps.r.outputs.clang == 'true'
         env:
-          STABLE: ${{ inputs.stable }}
+          LLVM: ${{ steps.r.outputs.llvm }}
         run: |
           set -euo pipefail
           mkdir tc
-          curl -fsSL --retry 5 -o tc/llvm-mingw-clang-nightly.tar.xz \
-            https://github.com/mstorsjo/llvm-mingw/releases/download/nightly/llvm-mingw-nightly-ucrt-ubuntu-22.04-x86_64.tar.xz
-          if [ "$STABLE" = "true" ]; then
-            curl -fsSL --retry 5 -o tc/llvm-mingw-clang23.tar.xz \
-              https://github.com/mstorsjo/llvm-mingw/releases/download/$LLVM_MINGW_STABLE/llvm-mingw-$LLVM_MINGW_STABLE-ucrt-ubuntu-22.04-x86_64.tar.xz
-          fi
+          for c in $LLVM; do
+            case $c in
+              clang-nightly) url=https://github.com/mstorsjo/llvm-mingw/releases/download/nightly/llvm-mingw-nightly-ucrt-ubuntu-22.04-x86_64.tar.xz ;;
+              clang23)       url=https://github.com/mstorsjo/llvm-mingw/releases/download/$LLVM_MINGW_STABLE/llvm-mingw-$LLVM_MINGW_STABLE-ucrt-ubuntu-22.04-x86_64.tar.xz ;;
+            esac
+            curl -fsSL --retry 5 -o "tc/llvm-mingw-$c.tar.xz" "$url"
+          done
           ls -l tc
 
       - uses: actions/upload-artifact@v4

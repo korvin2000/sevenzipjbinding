@@ -1,20 +1,32 @@
-# Benchmark results: GCC 17 snapshot vs Clang nightly, Windows x64 (2026-10-13)
+# Benchmark results: GCC 16.2 / 17 snapshot vs Clang 23.1 / 24 nightly, Windows x64 (2026-10-13)
 
 7-Zip-JBinding 26.03-2.3 (7-Zip 26.03 engine), Windows x64 native library and 7-Zip's own `7zz.exe`
 built from the same `7zip/` sources by
-[`windows-x64-compilers.yml`](.github/workflows/windows-x64-compilers.yml) (CI run
-[38397134132](https://github.com/korvin2000/sevenzipjbinding/actions/runs/38397134132)).
+[`windows-x64-compilers.yml`](.github/workflows/windows-x64-compilers.yml). CI runs:
+[38397134132](https://github.com/korvin2000/sevenzipjbinding/actions/runs/38397134132) (development
+compilers) and [38413713336](https://github.com/korvin2000/sevenzipjbinding/actions/runs/38413713336)
+(stable releases: GCC 16.2.0 and Clang 23.1.3, plus the two nightly `avx2-lto` builds for reference).
 
 ## TL;DR
 
+* **Latest stable releases (GCC 16.2.0, Clang 23.1.3) and development builds (GCC 17.0.0 snapshot,
+  Clang 24.0.0git nightly) all build the project with GitHub CI and pass the full test suite in every
+  variant.**
+* **The nightlies bring no speed gain.** On the same machine, Clang 23.1.3 ≈ Clang 24 nightly (codec
+  geomean ratio 0.999; Java binding +1.4% for 23.1.3), and GCC 16.2.0 ≈ GCC 17 snapshot (1.004).
+* **Release AVX2 build: `clang23-avx2-lto`** (stable Clang 23.1.3, `-O3 -march=x86-64-v3 -ffast-math
+  -flto`). It is the fastest build of the stable-compiler run: best Java-binding score (1.024 vs
+  GCC 16.2 `-O2`; GCC 16.2 `avx2-lto` scores 1.013) and best single-thread LZMA rating (+4.1%). It
+  also uses a released, reproducible compiler.
 * **Both development compilers build the project and pass the full JUnit suite (18/18 ctest bundles)
   on a native Windows x64 JVM, in every variant**, including `-O3 -march=x86-64-v3 -ffast-math -flto`.
 * **There is no big winner: GCC 17 and Clang 24 end up within about 1-3% of each other overall**, and
   the optimized AVX2 builds land within about ±3% of the plain `-O2` generic build (sometimes slower). 7-Zip's hot
   loops are already hand-tuned and CPU-dispatched (AES-NI, SHA-NI, CRC, AVX2 match finder), so `-O3`,
   AVX2 and fast-math have little left to optimize.
-* **Chosen AVX2 build: `clang-nightly-avx2-lto`** (Clang 24.0.0git, `-O3 -march=x86-64-v3
-  -ffast-math -flto`):
+* Development-compiler run: **`clang-nightly-avx2-lto`** (Clang 24.0.0git, `-O3 -march=x86-64-v3
+  -ffast-math -flto`) was the best (it shipped in release `-ci2`; `-ci3` ships the equivalent Clang
+  23.1.3 build):
   * best end-to-end JNI score on both machines (+0.1% / +2.7% vs the GCC 17 `-O2` baseline; +1.1% /
     +2.8% vs `gcc17-avx2-lto`);
   * fastest BZip2 compression (5-10%) and ZIP/Deflate (1-4%);
@@ -168,11 +180,38 @@ Clang/GCC ratio of these geomeans, by variant: base 1.005 / 1.028; avx2 0.985 / 
 The local per-method numbers are a single round. Isolated outliers there (for example `avx2` Deflate64:x5
 0.41 or BZip2:x1 0.66) are laptop noise, because the same rows are ≈1.0 on CI and in the LTO column.
 
+## Stable compilers: GCC 16.2.0 vs Clang 23.1.3 (CI run 38413713336, AMD EPYC 7763 / Zen 3)
+
+GCC 16.2.0: Linux-hosted cross toolchain built by the same recipe (mingw-w64 master, UCRT). Clang
+23.1.3: llvm-mingw 20261006. The two development `avx2-lto` builds ran alongside on the same runner.
+This runner was quiet: multi-thread cv ≤ 3%, single-thread decompression cv ≤ 2%.
+
+| build | LZMA 1T compress | LZMA 1T decompress | LZMA NT total | codec geomean | Java binding score |
+|---|---:|---:|---:|---:|---:|
+| gcc16-base | 4783 | 4071 | 15113 | 1.000 | 1.000 |
+| gcc16-avx2 | 4549 | 4082 | 15101 | 1.007 | 1.008 |
+| gcc16-avx2-lto | 5036 | **4098** | 14899 | 1.003 | 1.013 |
+| clang23-base | 4600 | 4032 | 14912 | **1.014** | 1.011 |
+| clang23-avx2 | 4821 | 4035 | 14907 | 1.005 | 1.022 |
+| **clang23-avx2-lto** | **5204** | 4012 | 14891 | 1.009 | **1.024** |
+| gcc17-avx2-lto (snapshot) | 4916 | 4017 | 14705 | 0.999 | 0.995 |
+| clang-nightly-avx2-lto | 4866 | 4013 | 14760 | 1.010 | 1.010 |
+
+Head-to-head (codec geomean):
+* Clang 23.1.3 / GCC 16.2: base 1.014, avx2 0.998, avx2-lto 1.006.
+* Clang 23.1.3 / Clang 24 nightly (`avx2-lto`): 0.999.
+* GCC 16.2 / GCC 17 snapshot (`avx2-lto`): 1.004.
+* Same pattern as the development compilers: GCC is 1.5-4% faster at LZMA decompression, Clang is
+  faster through the Java binding (BZip2 and LZMA2 compression), and `-O3`/AVX2 changes the totals
+  by under 1%. Full tables: appendix C.
+
 ## Recommendation
 
-* **Need maximum speed on AVX2 machines:** use `clang-nightly-avx2-lto`. It is published in the
-  release as `sevenzipjbinding-26.03-2.3-Windows-amd64-avx2.zip`, a drop-in replacement for the
-  `Windows-amd64` zip. It is the fastest end-to-end through the binding on both CPUs.
+* **Need maximum speed on AVX2 machines:** use the release's
+  `sevenzipjbinding-26.03-2.3-Windows-amd64-avx2.zip`, a drop-in replacement for the `Windows-amd64`
+  zip. From release `-ci3` on it is built with **stable Clang 23.1.3** (`clang23-avx2-lto`), the
+  fastest build through the binding on the stable-compiler run and equal to Clang nightly
+  elsewhere.
 * **If 7z/LZMA2 compression throughput is all that matters:** GCC 17 (even at plain `-O2`) is 2-5%
   faster there. Build it with the same workflow (`only: gcc17-base` / `gcc17-avx2-lto`).
 * **Portability first:** the generic `-O2` builds are within about 0-3% of the AVX2 builds overall.
@@ -445,4 +484,138 @@ Rounds: LZMA 5, `-mm=*` 1, JNI 2 (interleaved, rotating order); numbers are medi
 | bzip2-l9-mt1 extract | 443 | **411** | 457 | 427 | 428 | 427 |
 
 JNI score (geomean speed vs base): clang-nightly-avx2-lto 1.027, clang-nightly-base 1.003, clang-nightly-avx2 1.003, gcc17-base 1.000, gcc17-avx2-lto 0.999, gcc17-avx2 0.994
+
+## Appendix C: stable compilers run (AMD EPYC 7763, Zen 3)
+
+
+```
+7-Zip (z) 26.03 (x64) : Copyright (c) 1999-2026 Igor Pavlov : 2026-09-03
+ mt1 d18
+Compiler:  CLANG 24.0.0 ver:Clang 24.0.0git (https://github.com/llvm/llvm-project.git dff64a2bf54d0abfc3c2232abb04ec28c40087ed) GCC 4.2.1 : AVX2
+Windows 10.0 26100 : Microsoft Hv : Hv#1 : 10.0.26100.33.0.33438
+x64 19.101 threads:4 128TB f:100005F310E2774C
+AMD EPYC 7763 64-Core Processor
+(A00F11 : AMD64 Family 25 Model 1 Stepping 1) (->) 2445 MHz
+1T CPU Freq (MHz):  3200  3205  3211  3211  3191  3207  3207
+RAM size:   16378 MB,  # CPU hardware threads:   4
+RAM usage:      6 MB,  # Benchmark threads:      1
+```
+
+Rounds: LZMA 7, `-mm=*` 2, JNI 2 (interleaved, rotating order); numbers are medians (JNI: best). Ratios are relative to `gcc16-base`.
+
+#### Builds
+
+| build | compiler | flags |
+|---|---|---|
+| clang-nightly-avx2-lto | clang version 24.0.0git (https://github.com/llvm/llvm-project.git dff64a2bf54d0abfc3c2232abb04ec28c40087ed) | `-O3 -march=x86-64-v3 -ffast-math -flto` |
+| clang23-avx2 | clang version 23.1.3 (https://github.com/llvm/llvm-project.git 0d261d1ca552c95a8f007e061c787ac7132fbcbc) | `-O3 -march=x86-64-v3 -ffast-math` |
+| clang23-avx2-lto | clang version 23.1.3 (https://github.com/llvm/llvm-project.git 0d261d1ca552c95a8f007e061c787ac7132fbcbc) | `-O3 -march=x86-64-v3 -ffast-math -flto` |
+| clang23-base | clang version 23.1.3 (https://github.com/llvm/llvm-project.git 0d261d1ca552c95a8f007e061c787ac7132fbcbc) | `(project defaults: -O2, generic x86-64)` |
+| gcc16-avx2 | x86_64-w64-mingw32-gcc (sevenzipjbinding CI cross, gcc-16.2.0) 16.2.0 | `-O3 -march=x86-64-v3 -ffast-math` |
+| gcc16-avx2-lto | x86_64-w64-mingw32-gcc (sevenzipjbinding CI cross, gcc-16.2.0) 16.2.0 | `-O3 -march=x86-64-v3 -ffast-math -flto=auto` |
+| gcc16-base | x86_64-w64-mingw32-gcc (sevenzipjbinding CI cross, gcc-16.2.0) 16.2.0 | `(project defaults: -O2, generic x86-64)` |
+| gcc17-avx2-lto | x86_64-w64-mingw32-gcc (sevenzipjbinding CI cross, gcc-17-20261011) 17.0.0 20261011 (experimental) | `-O3 -march=x86-64-v3 -ffast-math -flto=auto` |
+
+#### LZMA rating (7zz b -md22), MIPS - higher is better (1T pinned to one core)
+
+| build | 1T compress | 1T decompress | 1T total | vs base | NT compress | NT decompress | NT total | vs base |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|
+| clang-nightly-avx2-lto | 4866 | 4013 | 4450 | 1.005 | 16206 | 13335 | 14760 | 0.977 |
+| clang23-avx2 | 4821 | 4035 | 4376 | 0.988 | 16474 | 13364 | 14907 | 0.986 |
+| clang23-avx2-lto | 5204 | 4012 | 4609 | 1.041 | 16635 | 13092 | 14891 | 0.985 |
+| clang23-base | 4600 | 4032 | 4308 | 0.973 | 16609 | 13275 | 14912 | 0.987 |
+| gcc16-avx2 | 4549 | 4082 | 4312 | 0.974 | 16504 | 13699 | 15101 | 0.999 |
+| gcc16-avx2-lto | 5036 | 4098 | 4575 | 1.033 | 16190 | 13573 | 14899 | 0.986 |
+| gcc16-base | 4783 | 4071 | 4427 | 1.000 | 16711 | 13502 | 15113 | 1.000 |
+| gcc17-avx2-lto | 4916 | 4017 | 4438 | 1.002 | 15936 | 13474 | 14705 | 0.973 |
+
+#### Overall (geometric mean of all `-mm=*` method speeds, single thread) vs base
+
+| rank | build | score |
+|---:|---|---:|
+| 1 | clang23-base | 1.014 |
+| 2 | clang-nightly-avx2-lto | 1.010 |
+| 3 | clang23-avx2-lto | 1.009 |
+| 4 | gcc16-avx2 | 1.007 |
+| 5 | clang23-avx2 | 1.005 |
+| 6 | gcc16-avx2-lto | 1.003 |
+| 7 | gcc16-base | 1.000 |
+| 8 | gcc17-avx2-lto | 0.999 |
+
+#### Per-method speed, single thread (MB/s; `(dec)` = decode) - higher is better
+
+| method | clang-nightly-avx2-lto | clang23-avx2 | clang23-avx2-lto | clang23-base | gcc16-avx2 | gcc16-avx2-lto | gcc16-base | gcc17-avx2-lto |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|
+| LZMA:x1 | **24.0** | 23.9 | 23.6 | 23.7 | 21.9 | 22.5 | 23.0 | 22.4 |
+| LZMA:x1 (dec) | 48.5 | 48.5 | 47.9 | 48.0 | 49.3 | 49.3 | **49.4** | 48.6 |
+| LZMA:x3 | 7.6 | 7.4 | 7.3 | **8.2** | 6.6 | 7.0 | 6.7 | 6.8 |
+| LZMA:x3 (dec) | 45.9 | 45.8 | 45.1 | 45.6 | 46.3 | **46.7** | 46.4 | 46.2 |
+| LZMA:x5:mt1 | 3.7 | 3.8 | **3.9** | 3.8 | 3.6 | 3.5 | 3.7 | 3.7 |
+| LZMA:x5:mt1 (dec) | 44.9 | **45.9** | 45.7 | 45.4 | 45.8 | 45.8 | 45.7 | 45.3 |
+| LZMA:x5:mt2 | 11.2 | 11.1 | 10.7 | 10.6 | 10.5 | 10.8 | **11.3** | 11.0 |
+| LZMA:x5:mt2 (dec) | 45.5 | **46.2** | 45.1 | 45.6 | 45.9 | 45.9 | 45.7 | 45.2 |
+| Deflate:x1 | 60.3 | 59.0 | **61.3** | 59.0 | 55.8 | 57.0 | 57.7 | 56.5 |
+| Deflate:x1 (dec) | 193.2 | 189.5 | 194.2 | 188.0 | 191.6 | **194.2** | 185.0 | 191.0 |
+| Deflate:x5 | 18.7 | 18.0 | **18.8** | 17.7 | 17.6 | 18.8 | 18.2 | 18.5 |
+| Deflate:x5 (dec) | 192.9 | 188.7 | **194.8** | 187.5 | 192.1 | 194.8 | 184.2 | 191.7 |
+| Deflate:x7 | 7.3 | 7.4 | 7.5 | 7.2 | 7.3 | **7.6** | 7.4 | 7.6 |
+| Deflate:x7 (dec) | 193.7 | 188.0 | **197.2** | 190.1 | 193.5 | 195.8 | 185.9 | 193.3 |
+| Deflate64:x5 | 16.8 | 16.2 | 16.7 | 16.0 | 15.9 | **16.9** | 16.4 | 16.7 |
+| Deflate64:x5 (dec) | 191.2 | 185.9 | 194.8 | 189.0 | 193.8 | **195.1** | 186.7 | 193.9 |
+| BZip2:x1 | 11.0 | 11.0 | 11.1 | 11.0 | 11.3 | 11.0 | **11.3** | 11.1 |
+| BZip2:x1 (dec) | 44.0 | 41.7 | 44.0 | 42.4 | **46.8** | 45.7 | 46.1 | 45.4 |
+| BZip2:x5 | **10.1** | 9.8 | 9.8 | 10.0 | 10.0 | 9.7 | 10.0 | 9.9 |
+| BZip2:x5 (dec) | 30.8 | 29.9 | 31.6 | 30.8 | 31.8 | **32.0** | 30.8 | 29.4 |
+| BZip2:x5:mt2 | 18.9 | 17.0 | 17.1 | 15.9 | **19.0** | 18.6 | 18.8 | 18.5 |
+| BZip2:x5:mt2 (dec) | 52.7 | 46.7 | 50.8 | 47.9 | **55.5** | 54.5 | 54.7 | 52.5 |
+| BZip2:x7 | **3.1** | 3.1 | 3.0 | 3.1 | 3.1 | 3.1 | 3.1 | 3.0 |
+| BZip2:x7 (dec) | 30.6 | 30.1 | 31.6 | 31.0 | **32.4** | 31.5 | 32.1 | 29.0 |
+| PPMD:x1 | 6.7 | 6.2 | 6.6 | 6.6 | **7.2** | 7.1 | 7.1 | 7.0 |
+| PPMD:x1 (dec) | 5.8 | 6.3 | 6.3 | 6.4 | 6.1 | **6.4** | 6.3 | 6.4 |
+| PPMD:x5 | 4.4 | 4.1 | 4.4 | 4.6 | 4.6 | **4.7** | 4.4 | 4.3 |
+| PPMD:x5 (dec) | 4.0 | 4.1 | 4.2 | **4.2** | 4.0 | 4.1 | 4.1 | 4.0 |
+| Swap4 | **83324.8** | 81685.8 | 80754.2 | 82402.1 | 82450.4 | 79710.4 | 82192.2 | 82106.8 |
+| Swap4 (dec) | 82354.0 | 82250.5 | 81153.0 | 81355.9 | **82408.7** | 80025.5 | 81869.0 | 81913.1 |
+| Delta:4 | 3072.0 | 3038.2 | 2878.7 | 3022.8 | **3323.4** | 3237.1 | 3298.4 | 3308.1 |
+| Delta:4 (dec) | 1739.6 | 1731.0 | 1715.3 | **1740.5** | 1417.4 | 1397.3 | 1417.1 | 1416.3 |
+| BCJ | 3108.8 | 3188.8 | 3086.7 | 3167.1 | 2590.0 | 3016.9 | 2597.3 | **3277.2** |
+| BCJ (dec) | 3169.9 | **3340.4** | 3046.5 | 3262.6 | 3213.9 | 3124.1 | 3202.2 | 3285.0 |
+| ARM64 | 5049.8 | **5299.3** | 4769.3 | 4535.4 | 4703.5 | 4531.3 | 4704.5 | 4693.9 |
+| ARM64 (dec) | **5146.5** | 4996.9 | 5033.7 | 4582.6 | 4735.6 | 4512.9 | 4732.3 | 4703.0 |
+| RISCV | 4226.9 | **4253.1** | 4059.6 | 4238.6 | 3139.4 | 2451.2 | 3119.2 | 3145.9 |
+| RISCV (dec) | 4331.5 | 4193.3 | **4405.3** | 4166.9 | 2570.3 | 2967.8 | 3106.2 | 2589.4 |
+| AES256CBC:1 | 150.9 | 149.6 | 145.6 | **214.3** | 200.2 | 195.9 | 200.2 | 200.3 |
+| AES256CBC:1 (dec) | 165.2 | 165.4 | 165.2 | **221.8** | 198.0 | 189.5 | 196.9 | 198.2 |
+| AES256CBC:2 | 863.4 | 862.5 | 860.6 | 862.7 | **864.5** | 863.2 | 862.6 | 864.5 |
+| AES256CBC:2 (dec) | 6715.2 | **6737.3** | 6700.7 | 6551.4 | 6624.2 | 6575.0 | 6598.0 | 6608.8 |
+| AES256CBC:3 | 863.1 | 863.5 | 862.3 | 862.0 | 864.1 | **864.1** | 863.0 | 864.0 |
+| AES256CBC:3 (dec) | 6737.6 | 6741.0 | **6747.9** | 6554.2 | 6599.8 | 6559.2 | 6624.2 | 6631.6 |
+| CRC32:12 | 3281.4 | **3320.7** | 3287.9 | 3295.6 | 3041.3 | 3063.6 | 3080.9 | 3060.7 |
+| CRC64 | 2322.6 | 2350.0 | 2148.2 | **2352.6** | 2218.8 | 2242.2 | 2236.3 | 2234.5 |
+| XXH64 | 7587.9 | 7586.6 | 7612.7 | 12240.3 | 12345.4 | **12354.0** | 12346.0 | 8100.3 |
+| MD5 | 540.2 | 530.7 | 533.6 | 520.6 | **648.5** | 647.3 | 620.7 | 648.3 |
+| SHA1:1 | 497.4 | 583.3 | 598.9 | 577.0 | **675.9** | 611.0 | 561.4 | 668.3 |
+| SHA1:2 | 1651.7 | 1649.7 | **1652.3** | 1651.9 | 1613.8 | 1626.9 | 1620.0 | 1649.0 |
+| SHA256:1 | 275.4 | 278.3 | 289.4 | 281.9 | 307.5 | **308.8** | 292.2 | 306.0 |
+| SHA256:2 | 1545.5 | 1547.1 | 1548.6 | 1547.2 | **1549.5** | 1548.1 | 1548.2 | 1548.8 |
+| SHA512:1 | 443.2 | 451.8 | 459.8 | 435.6 | **489.2** | 484.1 | 458.7 | 455.6 |
+| SHA3-256 | 445.4 | 434.7 | 444.2 | 365.3 | **452.6** | 428.7 | 381.7 | 436.6 |
+| BLAKE2sp:1 | 416.9 | 434.0 | 440.5 | 454.2 | 453.8 | 454.4 | 451.9 | **464.1** |
+| BLAKE2sp:2 | 1421.0 | 1412.9 | **1422.1** | 1318.1 | 1332.6 | 1334.7 | 1279.9 | 1332.3 |
+| BLAKE2sp:3 | 2727.6 | **2885.4** | 2808.7 | 2201.7 | 1974.6 | 1817.7 | 1901.8 | 1904.1 |
+
+#### JNI binding (JniBench, 32 MiB corpus cap), best time ms - lower is better
+
+| case | clang-nightly-avx2-lto | clang23-avx2 | clang23-avx2-lto | clang23-base | gcc16-avx2 | gcc16-avx2-lto | gcc16-base | gcc17-avx2-lto |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|
+| 7z-lzma2-l5-mt1 compress | 10782 | 10012 | **9983** | 10182 | 10363 | 10423 | 10674 | 10420 |
+| 7z-lzma2-l5-mt1 extract | 356 | 352 | 354 | 355 | **349** | 351 | 358 | 361 |
+| 7z-lzma2-l5-mtN compress | 5758 | **5455** | 5620 | 6024 | 6069 | 5875 | 5624 | 5741 |
+| 7z-lzma2-l5-mtN extract | 352 | 349 | 352 | 348 | 345 | **343** | 349 | 356 |
+| zip-deflate-l5 compress | **1166** | 1218 | 1197 | 1180 | 1178 | 1187 | 1174 | 1202 |
+| zip-deflate-l5 extract | 158 | 160 | **155** | 163 | 161 | 160 | 167 | 161 |
+| bzip2-l9-mt1 compress | 9076 | 8990 | 9140 | **8909** | 9609 | 9220 | 9876 | 9977 |
+| bzip2-l9-mt1 extract | 439 | 441 | 431 | 434 | **420** | 430 | 424 | 431 |
+
+JNI score (geomean speed vs base): clang23-avx2-lto 1.024, clang23-avx2 1.022, gcc16-avx2-lto 1.013, clang23-base 1.011, clang-nightly-avx2-lto 1.010, gcc16-avx2 1.008, gcc16-base 1.000, gcc17-avx2-lto 0.995
 

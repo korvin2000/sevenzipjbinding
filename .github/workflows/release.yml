@@ -36,7 +36,7 @@ jobs:
     needs: build
     uses: ./.github/workflows/windows-x64-compilers.yml
     with:
-      only: clang-nightly-avx2-lto   # benchmark winner, see bench-results.md
+      only: clang23-avx2-lto   # benchmark winner, see bench-results.md
       bench: false
 
   publish:
@@ -53,7 +53,7 @@ jobs:
 
       - uses: actions/download-artifact@v4
         with:
-          name: bin-clang-nightly-avx2-lto
+          name: bin-clang23-avx2-lto
           path: avx2
 
       - name: Create the release
@@ -93,9 +93,9 @@ jobs:
             echo "Not built by CI (yet): Linux glibc, Windows x86, 32-bit ARM and the AllPlatforms/AllWindows bundles."
             echo
             echo "**\`Windows-amd64-avx2\`** is a drop-in replacement for \`Windows-amd64\` (same jar names) for x86-64-v3"
-            echo "CPUs (AVX2/FMA/BMI2): \`$AVX2_FLAGS\`, $AVX2_COMPILER (development snapshot), cross-built and"
+            echo "CPUs (AVX2/FMA/BMI2): \`$AVX2_FLAGS\`, $AVX2_COMPILER, cross-built and"
             echo "tested with the full JUnit suite on Windows x64. On CPUs without AVX2 it fails with an illegal"
-            echo "instruction - use \`Windows-amd64\` there. GCC 17 snapshot vs Clang nightly benchmark:"
+            echo "instruction - use \`Windows-amd64\` there. GCC 16.2/17 vs Clang 23.1/24 benchmark:"
             echo "\`bench-results-$VERSION.md\`."
           } > notes.md
           gh release create "$TAG" dist/*.zip dist/SHA256SUMS.txt "dist/ReleaseNotes-$VERSION.txt" \
