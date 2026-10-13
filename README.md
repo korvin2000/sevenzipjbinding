@@ -165,7 +165,9 @@ make package       # build the distribution ZIP
 Windows builds use MinGW only (MinGW‑w64 GCC for x86/x64, llvm‑mingw for ARM64; MSVC and Cygwin are
 not supported). GitHub Actions ([`.github/workflows/`](.github/workflows)) builds and tests Windows x64 &
 ARM64, Linux musl (Alpine) amd64 & ARM64, macOS (universal, x86_64, arm64) and FreeBSD amd64 on every
-push; the per‑workflow comments show the exact build commands. The remaining release platforms (Linux
+push; the per‑workflow comments show the exact build commands. The **Release** workflow (Actions tab →
+Release → Run workflow, or push a `Release-*` tag) builds them again and publishes a GitHub release with
+the zips. The remaining release platforms (Linux
 glibc, 32‑bit ARM, Windows x86) are produced with the helper scripts under
 [`scripts/`](https://github.com/borisbrodski/sevenzipjbinding/tree/master/scripts) (DockCross / Alpine / QEMU).
 
