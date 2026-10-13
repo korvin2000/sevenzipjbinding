@@ -41,7 +41,7 @@ concurrency:
 
 env:
   BINUTILS_VER: '2.47'
-  MINGW_VER: 'v14.0.0'
+  MINGW_VER: '63ebe6cdb3ec4d5c586b7f0f0c03dd502e44c296'   # mingw-w64 master (v14.0.0 CRT fails with GCC 17)
   GCC_STABLE: 'gcc-16.2.0'
   LLVM_MINGW_STABLE: '20261006'
 
@@ -196,7 +196,11 @@ jobs:
           x86_64-w64-mingw32-gcc --version 2>/dev/null | head -1 || x86_64-w64-mingw32-clang --version | head -1
           bash scripts/compiler-bench/build-variant.sh "${{ startsWith(matrix.compiler, 'gcc') && 'gcc' || 'clang' }}" \
             ${{ matrix.variant }} dist/${{ matrix.compiler }}-${{ matrix.variant }}
-          cat dist/*/dll-compile-cmd.txt dist/*/7zz-compile-cmd.txt | cut -c1-2000
+          # effective optimization flags, in command-line order (the last -O wins)
+          for f in dist/*/dll-compile-cmd.txt dist/*/7zz-compile-cmd.txt; do
+            echo "$(basename "$f"): $(grep -oE -- ' -(O[0-3s]?|march=[^ ]+|flto[^ ]*|ffast-math|fno-devirtualize-speculatively)( |$)' "$f" | tr -d '
+')"
+          done
 
       - uses: actions/upload-artifact@v4
         with:
@@ -206,6 +210,7 @@ jobs:
   test:
     name: test ${{ matrix.compiler }}-${{ matrix.variant }}
     needs: [resolve, build]
+    if: ${{ !cancelled() }}   # test whatever built (a failed build's test fails at its artifact download)
     runs-on: windows-latest
     timeout-minutes: 60
     strategy:
@@ -285,6 +290,7 @@ jobs:
   bench:
     name: benchmark (all builds, one runner)
     needs: [resolve, build]
+    if: ${{ !cancelled() }}   # benchmark whatever built
     runs-on: windows-latest
     timeout-minutes: 300
     steps:
