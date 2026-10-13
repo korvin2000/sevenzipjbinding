@@ -155,17 +155,19 @@ bundled 7‑Zip engine now postdates the upstream fix released in 7‑Zip 24.07
 You only need this to build the native library yourself; most users should just use the artifacts above.
 
 ```bash
-# Linux — requires CMake (>= 2.6), a C/C++ toolchain and JDK 8+
+# Linux — requires CMake 3.x (CMake 4: add -DCMAKE_POLICY_VERSION_MINIMUM=3.5), a C/C++ toolchain and JDK 8+
 cmake .            # or: cmake . -DJAVA_JDK=<path-to-jdk>
 make
 ctest              # run the tests
 make package       # build the distribution ZIP
 ```
 
-Windows builds use MinGW (recommended) or Cygwin; the full cross‑platform release matrix
-(Linux glibc/musl, ARM, Windows, macOS) is produced with the helper scripts under
-[`scripts/`](https://github.com/borisbrodski/sevenzipjbinding/tree/master/scripts) (DockCross / Alpine / QEMU) in the
-source repository. See the scripts for details.
+Windows builds use MinGW only (MinGW‑w64 GCC for x86/x64, llvm‑mingw for ARM64; MSVC and Cygwin are
+not supported). GitHub Actions ([`.github/workflows/`](.github/workflows)) builds and tests Windows x64 &
+ARM64, Linux musl (Alpine) amd64 & ARM64, macOS (universal, x86_64, arm64) and FreeBSD amd64 on every
+push; the per‑workflow comments show the exact build commands. The remaining release platforms (Linux
+glibc, 32‑bit ARM, Windows x86) are produced with the helper scripts under
+[`scripts/`](https://github.com/borisbrodski/sevenzipjbinding/tree/master/scripts) (DockCross / Alpine / QEMU).
 
 ## 🤝 Contributing
 

@@ -1,0 +1,87 @@
+name: CI (all platforms)
+
+# Builds + tests every CI-buildable platform by calling the per-platform workflows (each one also stays
+# runnable on its own from the Actions tab):
+#   windows-x64.yml    Windows-amd64            MinGW-w64 GCC, native windows-latest
+#   windows-arm64.yml  Windows-arm64            llvm-mingw, native windows-11-arm
+#   linux-musl.yml     Linux-amd64-musl         Alpine container, native ubuntu-24.04
+#                      Linux-arm64-musl         Alpine container, native ubuntu-24.04-arm
+#   macos.yml          AllMac (universal), Mac-x86_64, Mac-arm64   macos-14 (+ Rosetta 2)
+#   freebsd.yml        FreeBSD-amd64            FreeBSD VM on ubuntu-latest
+# The final job collects all platform zips into one artifact and fails if any platform zip is missing.
+# Linux glibc / 32-bit ARM / Windows x86 are still built by the release scripts (DockCross), not here.
+on:
+  push:
+    branches-ignore: ['dependabot/**']
+    paths-ignore:
+      - 'website/**'
+      - 'doc/**'
+      - '**/*.md'
+      - 'ReleaseNotes.txt'
+      - 'ChangeLog'
+      - 'THANKS'
+      - 'AUTHORS'
+      - 'TODO*'
+  pull_request:
+    paths-ignore:
+      - 'website/**'
+      - 'doc/**'
+      - '**/*.md'
+      - 'ReleaseNotes.txt'
+      - 'ChangeLog'
+      - 'THANKS'
+      - 'AUTHORS'
+      - 'TODO*'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  windows-x64:
+    uses: ./.github/workflows/windows-x64.yml
+  windows-arm64:
+    uses: ./.github/workflows/windows-arm64.yml
+  linux-musl:
+    uses: ./.github/workflows/linux-musl.yml
+  macos:
+    uses: ./.github/workflows/macos.yml
+  freebsd:
+    uses: ./.github/workflows/freebsd.yml
+
+  platform-zips:
+    name: all platform zips
+    needs: [windows-x64, windows-arm64, linux-musl, macos, freebsd]
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: zips
+          merge-multiple: true
+
+      - name: Check every platform zip was built
+        run: |
+          set -u
+          ls -l zips
+          missing=0
+          for p in Windows-amd64 Windows-arm64 Linux-amd64-musl Linux-arm64-musl \
+                   AllMac Mac-x86_64 Mac-arm64 FreeBSD-amd64; do
+            if ls zips/sevenzipjbinding-*-"$p".zip >/dev/null 2>&1; then
+              echo "OK       $p"
+            else
+              echo "::error::missing platform zip: $p"; missing=1
+            fi
+          done
+          exit $missing
+
+      - name: Upload all platform zips (one artifact)
+        uses: actions/upload-artifact@v4
+        with:
+          name: all-platform-zips
+          path: zips/*.zip
+          if-no-files-found: warn

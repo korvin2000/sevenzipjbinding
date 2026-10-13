@@ -1,0 +1,121 @@
+name: Linux musl (Alpine) build & test
+
+# Build the native Linux musl libraries (Linux-amd64-musl, Linux-arm64-musl) in an Alpine container
+# and run the full JUnit suite on a musl JVM (Alpine's OpenJDK 8, which still ships javah). Each arch
+# runs NATIVELY - amd64 on ubuntu-24.04, arm64 on the ubuntu-24.04-arm runner (free for public repos) -
+# no QEMU. The container is started with 'docker run' and every step runs inside it through a custom
+# 'shell: docker exec ...' (JavaScript actions are not supported in Alpine job containers on arm64), with
+# the workspace and RUNNER_TEMP mounted at their host paths.
+#
+# musl is ABI-incompatible with glibc, hence separate "-musl" platforms; CMake cannot derive the "-musl"
+# suffix from the JVM (os.arch is plain amd64/aarch64), so JAVA_SYSTEM/JAVA_ARCH are passed explicitly.
+# Alpine 3.22: CMake 3.31 (CMake 4 drops pre-3.5 policy compat), GCC 14, musl 1.2.
+#
+# Manual: Actions tab -> "Linux musl (Alpine) build & test" -> Run workflow, or
+#   gh workflow run linux-musl.yml --ref master
+# Also called by ci.yml (all platforms).
+on:
+  workflow_dispatch:
+  workflow_call:
+
+permissions:
+  contents: read
+
+env:
+  ALPINE_VERSION: "3.22"
+  JDK: /usr/lib/jvm/java-1.8-openjdk
+
+jobs:
+  build-test:
+    name: Linux-${{ matrix.arch }}-musl (Alpine, native) build + test
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { arch: amd64, runner: ubuntu-24.04,     elf_machine: 'X86-64'  }
+          - { arch: arm64, runner: ubuntu-24.04-arm, elf_machine: 'AArch64' }
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Start the Alpine ${{ env.ALPINE_VERSION }} container (native ${{ matrix.arch }})
+        run: |
+          set -eux
+          docker run -d --name alpine \
+            -v "$GITHUB_WORKSPACE:$GITHUB_WORKSPACE" -v "$RUNNER_TEMP:$RUNNER_TEMP" \
+            -w "$GITHUB_WORKSPACE" "alpine:$ALPINE_VERSION" sleep infinity
+
+      - name: Install the toolchain (GCC, CMake, OpenJDK 8)
+        shell: docker exec alpine sh -eux {0}
+        run: |
+          apk add --no-cache build-base cmake openjdk8 binutils file
+          cat /etc/alpine-release; uname -m
+          gcc --version | head -1
+          cmake --version | head -1
+          ${{ env.JDK }}/bin/java -version
+          ls ${{ env.JDK }}/bin/javah
+
+      - name: Configure + build Linux-${{ matrix.arch }}-musl
+        shell: docker exec alpine sh -eux {0}
+        run: |
+          mkdir build && cd build
+          cmake .. -DCMAKE_BUILD_TYPE=Release -DJAVA_JDK=${{ env.JDK }} \
+            -DJAVA_SYSTEM=Linux -DJAVA_ARCH=${{ matrix.arch }}-musl
+          make -j"$(nproc)"
+          make package
+          echo "== built =="; ls -1 sevenzipjbinding-*-Linux-${{ matrix.arch }}-musl.zip
+
+      - name: Verify the .so (${{ matrix.elf_machine }} ELF, only musl libc needed)
+        shell: docker exec alpine sh -eux {0}
+        run: |
+          LIB=build/jbinding-cpp/lib7-Zip-JBinding.so
+          file "$LIB"
+          readelf -h "$LIB" | grep -E 'Machine:.*${{ matrix.elf_machine }}'
+          readelf -d "$LIB" | grep NEEDED
+          if readelf -d "$LIB" | grep NEEDED | grep -E 'libstdc\+\+|libgcc_s'; then
+            echo "::error::$LIB is not self-contained (dynamic libstdc++/libgcc_s; STATIC_BUILD broken)"; exit 1
+          fi
+
+      - name: Run tests (ctest, native musl JVM)
+        shell: docker exec alpine sh -eux {0}
+        run: cd build && ctest --output-on-failure
+
+      # Second column: the same full suite with ONLY the AllPlatforms jar on the classpath, so the
+      # runtime autodetection has to pick Linux-<arch>-musl (libc-aware) among all platforms. The
+      # AllPlatforms jar comes from the 'ci-allplatforms-fixture' prerelease; skipped when absent.
+      - name: Download the AllPlatforms jar (CI fixture prerelease, if published)
+        id: fixture
+        env:
+          GH_TOKEN: ${{ github.token }}
+          FIXTURE_REPO: ${{ vars.ALLPLATFORMS_FIXTURE_REPO || github.repository }}
+        run: |
+          set -eu
+          if gh release view ci-allplatforms-fixture -R "$FIXTURE_REPO" >/dev/null 2>&1; then
+            mkdir -p allplatforms && cd allplatforms
+            gh release download ci-allplatforms-fixture -R "$FIXTURE_REPO" -p '*AllPlatforms.zip'
+            unzip -q ./*AllPlatforms.zip
+            echo "present=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "::notice::No 'ci-allplatforms-fixture' release in $FIXTURE_REPO - AllPlatforms autodetection column skipped"
+            echo "present=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Run full suite via AllPlatforms autodetection (native musl JVM)
+        if: steps.fixture.outputs.present == 'true'
+        shell: docker exec alpine sh -eux {0}
+        run: |
+          APJAR="$(find "$PWD/allplatforms" -name 'sevenzipjbinding-AllPlatforms.jar' | head -1)"
+          test -n "$APJAR"
+          sed -i -E "s#[^:\"]*/sevenzipjbinding-Linux-${{ matrix.arch }}-musl\.jar#${APJAR}#g" build/JUnitRunner.cmake
+          grep -o 'sevenzipjbinding-[A-Za-z0-9_-]*\.jar' build/JUnitRunner.cmake | sort -u
+          grep -q 'sevenzipjbinding-AllPlatforms\.jar' build/JUnitRunner.cmake
+          if grep -q 'sevenzipjbinding-Linux-${{ matrix.arch }}-musl\.jar' build/JUnitRunner.cmake; then exit 1; fi
+          cd build && ctest --output-on-failure
+
+      - name: Upload Linux-${{ matrix.arch }}-musl platform zip
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: linux-${{ matrix.arch }}-musl
+          path: build/sevenzipjbinding-*-Linux-${{ matrix.arch }}-musl.zip
+          if-no-files-found: warn

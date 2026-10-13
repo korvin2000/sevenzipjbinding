@@ -7,10 +7,15 @@ name: Windows arm64 build & test
 # The runner's native arm64 JDK is 17: JDK 10+ has no 'javah', so CMake generates the JNI headers with
 # 'javac -h' instead (see cmake/FindJavaExtended.cmake). The jar stays Java-8 targeted.
 #
-# Manual-only (workflow_dispatch):
-#   gh workflow run windows-arm64.yml --ref windows-arm64
+# Manual: Actions tab -> "Windows arm64 build & test" -> Run workflow, or
+#   gh workflow run windows-arm64.yml --ref master
+# Also called by ci.yml (all platforms).
 on:
   workflow_dispatch:
+  workflow_call:
+
+permissions:
+  contents: read
 
 env:
   LLVM_MINGW_VERSION: "20250709"
@@ -75,13 +80,19 @@ jobs:
           cmake --build . --target package
           echo "== built =="; ls -1 sevenzipjbinding-*-Windows-arm64.* || true
 
-      - name: Verify the DLL is an arm64 PE
+      # STATIC_BUILD + -static (MINGWARM64) must leave no llvm-mingw runtime DLL import (libc++,
+      # libunwind, libwinpthread); the tests alone would not catch it, llvm-mingw's bin is on PATH.
+      - name: Verify the DLL is an arm64 PE with no llvm-mingw runtime DLL imports
         shell: bash
         run: |
           set -eux
-          DLL=$(find build -name '*7-Zip-JBinding.dll' | head -1)
+          DLL=$(find build/jbinding-cpp -name '*7-Zip-JBinding.dll' | head -1)
           test -n "$DLL"
-          llvm-readobj --file-headers "$DLL" | grep -iE 'Machine|ARM64|Aarch64'
+          llvm-readobj --file-headers "$DLL" | grep -E 'Machine: IMAGE_FILE_MACHINE_ARM64'
+          llvm-readobj --coff-imports "$DLL" | grep -E '^ *Name: '
+          if llvm-readobj --coff-imports "$DLL" | grep -iE '^ *Name: *lib[^ ]*\.dll'; then
+            echo "::error::$DLL depends on an llvm-mingw runtime DLL (libc++/libunwind/libwinpthread)"; exit 1
+          fi
 
       - name: Run tests (ctest, native arm64 JVM)
         shell: bash
@@ -89,17 +100,30 @@ jobs:
 
       # Second column: the same full suite with ONLY the AllPlatforms jar on the classpath, so the
       # runtime autodetection has to pick Windows-arm64 among all platforms. The AllPlatforms jar needs
-      # natives CI cannot build, so it comes from the 'ci-allplatforms-fixture' prerelease.
-      - name: Download the AllPlatforms jar (CI fixture prerelease)
+      # natives CI does not build (Linux glibc/ARM, Windows x86), so it comes from the
+      # 'ci-allplatforms-fixture' prerelease; the column is skipped when that release is absent.
+      - name: Download the AllPlatforms jar (CI fixture prerelease, if published)
+        id: fixture
         shell: pwsh
         env:
           GH_TOKEN: ${{ github.token }}
+          FIXTURE_REPO: ${{ vars.ALLPLATFORMS_FIXTURE_REPO || github.repository }}
         run: |
-          New-Item -ItemType Directory -Force allplatforms | Out-Null
-          gh release download ci-allplatforms-fixture -R $env:GITHUB_REPOSITORY -p '*AllPlatforms.zip' -D allplatforms
-          Get-ChildItem allplatforms/*.zip | Expand-Archive -DestinationPath allplatforms
+          gh release view ci-allplatforms-fixture -R $env:FIXTURE_REPO *> $null
+          if ($LASTEXITCODE -eq 0) {
+            New-Item -ItemType Directory -Force allplatforms | Out-Null
+            gh release download ci-allplatforms-fixture -R $env:FIXTURE_REPO -p '*AllPlatforms.zip' -D allplatforms
+            if ($LASTEXITCODE -ne 0) { exit 1 }
+            Get-ChildItem allplatforms/*.zip | Expand-Archive -DestinationPath allplatforms
+            "present=true" | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
+          } else {
+            Write-Output "::notice::No 'ci-allplatforms-fixture' release in $env:FIXTURE_REPO - AllPlatforms autodetection column skipped"
+            "present=false" | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
+          }
+          exit 0
 
       - name: Run full suite via AllPlatforms autodetection (native arm64 JVM)
+        if: steps.fixture.outputs.present == 'true'
         shell: bash
         run: |
           set -eux
@@ -108,7 +132,7 @@ jobs:
           sed -i -E "s#[^;\"]*/sevenzipjbinding-Windows-arm64\.jar#${APJAR}#g" build/JUnitRunner.cmake
           grep -o 'sevenzipjbinding-[A-Za-z0-9_-]*\.jar' build/JUnitRunner.cmake | sort -u
           grep -q 'sevenzipjbinding-AllPlatforms\.jar' build/JUnitRunner.cmake
-          ! grep -q 'sevenzipjbinding-Windows-arm64\.jar' build/JUnitRunner.cmake
+          if grep -q 'sevenzipjbinding-Windows-arm64\.jar' build/JUnitRunner.cmake; then exit 1; fi
           cd build && ctest --output-on-failure
 
       - name: Upload Windows arm64 platform zip

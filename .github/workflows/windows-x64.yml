@@ -1,0 +1,144 @@
+name: Windows x64 build & test
+
+# Build the native Windows x64 (amd64) library with MinGW-w64 GCC (MSYS2 MINGW64: msvcrt runtime, the
+# same GCC-style MinGW toolchain family as the release builds; MSVC is not supported, see
+# CMakeLists.txt) and run the full JUnit suite natively on a windows-latest hosted runner.
+#
+# MSYS2's GCC uses the posix thread model (libwinpthread), so the DLL is linked with -static on top of
+# STATIC_BUILD's -static-libgcc/-static-libstdc++: the shipped DLL must not import any MinGW runtime DLL
+# (verified below - the tests alone would not catch it, the MinGW bin dir is on PATH).
+#
+# Manual: Actions tab -> "Windows x64 build & test" -> Run workflow, or
+#   gh workflow run windows-x64.yml --ref master
+# Also called by ci.yml (all platforms).
+on:
+  workflow_dispatch:
+  workflow_call:
+
+permissions:
+  contents: read
+
+jobs:
+  build-test:
+    name: Windows x64 build + test (MinGW-w64 GCC, native)
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up x64 JDK 8 (needs javah)
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '8'
+          architecture: x64
+
+      - name: Install MinGW-w64 GCC (MSYS2 MINGW64)
+        id: msys2
+        uses: msys2/setup-msys2@v2
+        with:
+          msystem: MINGW64
+          update: false
+          install: mingw-w64-x86_64-gcc
+
+      - name: Put MinGW-w64 on PATH
+        shell: pwsh
+        run: |
+          "${{ steps.msys2.outputs.msys2-location }}\mingw64\bin" | Out-File -FilePath $env:GITHUB_PATH -Append -Encoding utf8
+
+      - name: Pin CMake 3.x (project predates CMake 4 / CMP0175)
+        uses: jwlawson/actions-setup-cmake@v2
+        with:
+          cmake-version: '3.28.6'
+
+      - name: Set up Ninja
+        uses: seanmiddleditch/gha-setup-ninja@v6
+
+      - name: Toolchain info
+        shell: bash
+        run: |
+          set -eux
+          command -v x86_64-w64-mingw32-gcc
+          x86_64-w64-mingw32-gcc --version | head -1
+          cmake --version | head -1
+          ninja --version
+          echo "JAVA_HOME=$JAVA_HOME"; "$JAVA_HOME/bin/java" -version
+          ls "$JAVA_HOME/bin/javah.exe"
+
+      - name: Configure + build (MinGW-w64 x86_64)
+        shell: bash
+        run: |
+          set -eux
+          mkdir build && cd build
+          cmake .. -G Ninja \
+            -DCMAKE_POLICY_VERSION_MINIMUM=3.5 \
+            -DMINGW64=Yes \
+            -DJAVA_SYSTEM=Windows -DJAVA_ARCH=amd64 \
+            -DCMAKE_C_COMPILER=x86_64-w64-mingw32-gcc \
+            -DCMAKE_CXX_COMPILER=x86_64-w64-mingw32-g++ \
+            -DCMAKE_SHARED_LINKER_FLAGS=-static \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DJAVA_JDK="$JAVA_HOME"
+          cmake --build . -j
+          cmake --build . --target package
+          echo "== built =="; ls -1 sevenzipjbinding-*-Windows-amd64.zip
+
+      - name: Verify the DLL is an x86-64 PE with no MinGW runtime DLL imports
+        shell: bash
+        run: |
+          set -eux
+          DLL=$(find build/jbinding-cpp -name '*7-Zip-JBinding.dll' | head -1)
+          test -n "$DLL"
+          objdump -f "$DLL" | grep -E 'file format pei-x86-64'
+          objdump -p "$DLL" | grep 'DLL Name'
+          if objdump -p "$DLL" | grep -iE 'DLL Name: *lib[^ ]*\.dll'; then
+            echo "::error::$DLL depends on a MinGW runtime DLL (libgcc/libstdc++/libwinpthread)"; exit 1
+          fi
+
+      - name: Run tests (ctest, native x64 JVM)
+        shell: bash
+        run: cd build && ctest --output-on-failure
+
+      # Second column: the same full suite with ONLY the AllPlatforms jar on the classpath, so the
+      # runtime autodetection has to pick Windows-amd64 among all platforms. The AllPlatforms jar needs
+      # natives CI does not build (Linux glibc/ARM, Windows x86), so it comes from the
+      # 'ci-allplatforms-fixture' prerelease; the column is skipped when that release is absent.
+      - name: Download the AllPlatforms jar (CI fixture prerelease, if published)
+        id: fixture
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+          FIXTURE_REPO: ${{ vars.ALLPLATFORMS_FIXTURE_REPO || github.repository }}
+        run: |
+          gh release view ci-allplatforms-fixture -R $env:FIXTURE_REPO *> $null
+          if ($LASTEXITCODE -eq 0) {
+            New-Item -ItemType Directory -Force allplatforms | Out-Null
+            gh release download ci-allplatforms-fixture -R $env:FIXTURE_REPO -p '*AllPlatforms.zip' -D allplatforms
+            if ($LASTEXITCODE -ne 0) { exit 1 }
+            Get-ChildItem allplatforms/*.zip | Expand-Archive -DestinationPath allplatforms
+            "present=true" | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
+          } else {
+            Write-Output "::notice::No 'ci-allplatforms-fixture' release in $env:FIXTURE_REPO - AllPlatforms autodetection column skipped"
+            "present=false" | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
+          }
+          exit 0
+
+      - name: Run full suite via AllPlatforms autodetection (native x64 JVM)
+        if: steps.fixture.outputs.present == 'true'
+        shell: bash
+        run: |
+          set -eux
+          APJAR="$(cygpath -m "$(find "$PWD/allplatforms" -name 'sevenzipjbinding-AllPlatforms.jar' | head -1)")"
+          test -n "$APJAR"
+          sed -i -E "s#[^;\"]*/sevenzipjbinding-Windows-amd64\.jar#${APJAR}#g" build/JUnitRunner.cmake
+          grep -o 'sevenzipjbinding-[A-Za-z0-9_-]*\.jar' build/JUnitRunner.cmake | sort -u
+          grep -q 'sevenzipjbinding-AllPlatforms\.jar' build/JUnitRunner.cmake
+          if grep -q 'sevenzipjbinding-Windows-amd64\.jar' build/JUnitRunner.cmake; then exit 1; fi
+          cd build && ctest --output-on-failure
+
+      - name: Upload Windows x64 platform zip
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-amd64
+          path: build/sevenzipjbinding-*-Windows-amd64.zip
+          if-no-files-found: warn
