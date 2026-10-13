@@ -1,7 +1,9 @@
 name: Release
 
 # Builds + tests every CI platform (ci.yml) from the tagged commit and publishes a GitHub release with
-# the per-platform zips, SHA256SUMS.txt and the release notes.
+# the per-platform zips, SHA256SUMS.txt and the release notes. Also ships an AVX2-optimized Windows x64
+# zip (Windows-amd64-avx2) built + tested by windows-x64-compilers.yml with the benchmark winner
+# (bench-results.md); the portable Windows-amd64 zip stays the default.
 #
 # How to cut a release (either way):
 #   * Actions tab -> "Release" -> Run workflow -> enter a new tag (e.g. Release-26.03-2.4), tick
@@ -28,9 +30,18 @@ jobs:
   build:
     uses: ./.github/workflows/ci.yml
 
+  # Runs AFTER ci.yml on purpose: ci.yml's "all platform zips" job downloads every artifact of the run,
+  # and this build's package zip has the same file name as the portable Windows-amd64 zip.
+  windows-x64-avx2:
+    needs: build
+    uses: ./.github/workflows/windows-x64-compilers.yml
+    with:
+      only: clang-nightly-avx2-lto   # benchmark winner, see bench-results.md
+      bench: false
+
   publish:
     name: publish GitHub release
-    needs: build
+    needs: [build, windows-x64-avx2]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -39,6 +50,11 @@ jobs:
         with:
           name: all-platform-zips
           path: dist
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: bin-clang-nightly-avx2-lto
+          path: avx2
 
       - name: Create the release
         env:
@@ -50,6 +66,10 @@ jobs:
           VERSION=$(sed -nE 's/^SET\(SEVENZIPJBINDING_VERSON ([^)]+)\)/\1/p' CMakeLists.txt)
           test -n "$VERSION"
           cp ReleaseNotes.txt "dist/ReleaseNotes-$VERSION.txt"
+          cp "avx2/sevenzipjbinding-$VERSION-Windows-amd64.zip" "dist/sevenzipjbinding-$VERSION-Windows-amd64-avx2.zip"
+          cp bench-results.md "dist/bench-results-$VERSION.md"
+          AVX2_COMPILER=$(sed -n 's/^compiler: *//p' avx2/info.txt)
+          AVX2_FLAGS=$(sed -n 's/^flags: *//p' avx2/info.txt)
           (cd dist && sha256sum *.zip > SHA256SUMS.txt && cat SHA256SUMS.txt)
           {
             echo "7-Zip-JBinding $VERSION (7-Zip 26.03 engine), built and tested by GitHub Actions"
@@ -61,6 +81,7 @@ jobs:
             echo "| Platform | Zip |"
             echo "|---|---|"
             echo "| Windows x64 | \`Windows-amd64\` |"
+            echo "| Windows x64, AVX2-optimized (Haswell / Zen 1 or newer) | \`Windows-amd64-avx2\` |"
             echo "| Windows ARM64 | \`Windows-arm64\` |"
             echo "| Linux musl (Alpine) x64 | \`Linux-amd64-musl\` |"
             echo "| Linux musl (Alpine) ARM64 | \`Linux-arm64-musl\` |"
@@ -70,6 +91,13 @@ jobs:
             echo "| FreeBSD x64 | \`FreeBSD-amd64\` |"
             echo
             echo "Not built by CI (yet): Linux glibc, Windows x86, 32-bit ARM and the AllPlatforms/AllWindows bundles."
+            echo
+            echo "**\`Windows-amd64-avx2\`** is a drop-in replacement for \`Windows-amd64\` (same jar names) for x86-64-v3"
+            echo "CPUs (AVX2/FMA/BMI2): \`$AVX2_FLAGS\`, $AVX2_COMPILER (development snapshot), cross-built and"
+            echo "tested with the full JUnit suite on Windows x64. On CPUs without AVX2 it fails with an illegal"
+            echo "instruction - use \`Windows-amd64\` there. GCC 17 snapshot vs Clang nightly benchmark:"
+            echo "\`bench-results-$VERSION.md\`."
           } > notes.md
           gh release create "$TAG" dist/*.zip dist/SHA256SUMS.txt "dist/ReleaseNotes-$VERSION.txt" \
+            "dist/bench-results-$VERSION.md" \
             --target "$GITHUB_SHA" --title "7-Zip-JBinding $VERSION ($TAG)" --notes-file notes.md $PRERELEASE

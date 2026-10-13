@@ -4,7 +4,7 @@ name: Windows x64 compilers (GCC snapshot vs Clang nightly) build, test + benchm
 # with development compilers and compares their performance:
 #   gcc17          GCC 17 trunk weekly snapshot (gcc.gnu.org/pub/gcc/snapshots/LATEST-17); no Windows
 #                  distribution ships it, so a Linux-hosted x86_64-w64-mingw32 cross toolchain is built
-#                  (scripts/compiler-bench/build-gcc-mingw-cross.sh, UCRT, mingw-w64 v14) and cached
+#                  (scripts/compiler-bench/build-gcc-mingw-cross.sh, UCRT, mingw-w64 master) and cached
 #   clang-nightly  llvm-mingw nightly (LLVM main, UCRT, libc++, lld) - github.com/mstorsjo/llvm-mingw
 #   (input 'stable': also GCC 16.2 cross + llvm-mingw release with Clang 23 as references)
 # each in three variants (scripts/compiler-bench/build-variant.sh):
@@ -15,7 +15,8 @@ name: Windows x64 compilers (GCC snapshot vs Clang nightly) build, test + benchm
 # runner in interleaved rounds (scripts/compiler-bench/bench.py; results in the job summary + artifact).
 #
 # Manual: Actions tab -> this workflow -> Run workflow (inputs below); also runs on push to the
-# 'compiler-bench' branch.
+# 'compiler-bench' branch. release.yml calls it (workflow_call) with only=<benchmark winner>, bench=false
+# to ship the AVX2-optimized Windows x64 zip next to the portable one. Results: bench-results.md.
 on:
   workflow_dispatch:
     inputs:
@@ -29,6 +30,19 @@ on:
       rounds:
         description: 'Benchmark rounds (interleaved)'
         default: '7'
+  workflow_call:
+    inputs:
+      only:
+        description: 'Comma-separated builds to make, e.g. clang-nightly-avx2-lto (empty = all)'
+        type: string
+        default: ''
+      bench:
+        description: 'Run the benchmark job'
+        type: boolean
+        default: true
+      gcc_snapshot:
+        type: string
+        default: ''
   push:
     branches: ['compiler-bench']
 
@@ -58,6 +72,7 @@ jobs:
         env:
           SNAP: ${{ inputs.gcc_snapshot }}
           STABLE: ${{ inputs.stable }}
+          ONLY: ${{ inputs.only }}
         run: |
           set -euo pipefail
           if [ -z "$SNAP" ]; then
@@ -70,15 +85,21 @@ jobs:
             tc="$tc,{\"name\":\"gcc16\",\"ver\":\"$GCC_STABLE\",\"url\":\"https://gcc.gnu.org/pub/gcc/releases/$GCC_STABLE/$GCC_STABLE.tar.xz\"}"
             comps="$comps gcc16 clang23"
           fi
-          builds=""
+          builds=""; used=""
           for c in $comps; do for v in base avx2 avx2-lto; do
-            builds="$builds{\"compiler\":\"$c\",\"variant\":\"$v\"},"
+            case ",${ONLY:-$c-$v}," in *",$c-$v,"*) ;; *) continue ;; esac
+            builds="$builds{\"compiler\":\"$c\",\"variant\":\"$v\"},"; used="$used $c"
           done; done
-          echo "gcc_toolchains=[$tc]" >> "$GITHUB_OUTPUT"
+          test -n "$builds"
+          # only the GCC toolchains some selected build needs
+          tc=$(echo "[$tc]" | jq -c --arg used "$used" '[.[] | select(.name as $n | ($used | split(" ") | index($n)))]')
+          echo "gcc_toolchains=$tc" >> "$GITHUB_OUTPUT"
           echo "builds=[${builds%,}]" >> "$GITHUB_OUTPUT"
+          echo "clang=$(case "$used" in *clang*) echo true ;; *) echo false ;; esac)" >> "$GITHUB_OUTPUT"
           cat "$GITHUB_OUTPUT"
 
       - name: Download llvm-mingw once (the nightly asset is replaced daily)
+        if: steps.r.outputs.clang == 'true'
         env:
           STABLE: ${{ inputs.stable }}
         run: |
@@ -93,6 +114,7 @@ jobs:
           ls -l tc
 
       - uses: actions/upload-artifact@v4
+        if: steps.r.outputs.clang == 'true'
         with:
           name: tc-llvm-mingw
           path: tc/
@@ -102,6 +124,7 @@ jobs:
   gcc-toolchain:
     name: GCC cross toolchain (${{ matrix.tc.ver }})
     needs: resolve
+    if: needs.resolve.outputs.gcc_toolchains != '[]'
     runs-on: ubuntu-24.04
     timeout-minutes: 180
     strategy:
@@ -133,6 +156,7 @@ jobs:
   build:
     name: build ${{ matrix.compiler }}-${{ matrix.variant }}
     needs: [resolve, gcc-toolchain]
+    if: ${{ !cancelled() && needs.resolve.result == 'success' && needs.gcc-toolchain.result != 'failure' }}
     runs-on: ubuntu-24.04
     timeout-minutes: 60
     strategy:
@@ -291,7 +315,7 @@ jobs:
   bench:
     name: benchmark (all builds, one runner)
     needs: [resolve, build]
-    if: ${{ !cancelled() }}   # benchmark whatever built
+    if: ${{ !cancelled() && inputs.bench != false }}   # benchmark whatever built
     runs-on: windows-latest
     timeout-minutes: 300
     steps:
