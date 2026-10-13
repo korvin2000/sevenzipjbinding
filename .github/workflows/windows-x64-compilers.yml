@@ -1,0 +1,331 @@
+name: Windows x64 compilers (GCC snapshot vs Clang nightly) build, test + benchmark
+
+# Builds the Windows x64 native library (and 7-Zip's own console 7zz.exe from the same 7zip/ sources)
+# with development compilers and compares their performance:
+#   gcc17          GCC 17 trunk weekly snapshot (gcc.gnu.org/pub/gcc/snapshots/LATEST-17); no Windows
+#                  distribution ships it, so a Linux-hosted x86_64-w64-mingw32 cross toolchain is built
+#                  (scripts/compiler-bench/build-gcc-mingw-cross.sh, UCRT, mingw-w64 v14) and cached
+#   clang-nightly  llvm-mingw nightly (LLVM main, UCRT, libc++, lld) - github.com/mstorsjo/llvm-mingw
+#   (input 'stable': also GCC 16.2 cross + llvm-mingw release with Clang 23 as references)
+# each in three variants (scripts/compiler-bench/build-variant.sh):
+#   base      project defaults (-O2, generic x86-64), avx2 = -O3 -march=x86-64-v3 -ffast-math,
+#   avx2-lto  avx2 + LTO.  avx2* builds need an AVX2/FMA/BMI2 CPU (Haswell / Zen 1 or newer).
+# Builds are cross-compiled on Linux (identical flow for both compilers); every build is then tested
+# with the full JUnit suite on a native Windows x64 JVM, and all builds are benchmarked on ONE Windows
+# runner in interleaved rounds (scripts/compiler-bench/bench.py; results in the job summary + artifact).
+#
+# Manual: Actions tab -> this workflow -> Run workflow (inputs below); also runs on push to the
+# 'compiler-bench' branch.
+on:
+  workflow_dispatch:
+    inputs:
+      gcc_snapshot:
+        description: 'GCC 17 snapshot (gcc-17-YYYYMMDD); empty = latest'
+        default: ''
+      stable:
+        description: 'Also build stable GCC 16.2 + Clang 23 as references'
+        type: boolean
+        default: false
+      rounds:
+        description: 'Benchmark rounds (interleaved)'
+        default: '7'
+  push:
+    branches: ['compiler-bench']
+
+permissions:
+  contents: read
+
+concurrency:
+  group: compilers-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  BINUTILS_VER: '2.47'
+  MINGW_VER: 'v14.0.0'
+  GCC_STABLE: 'gcc-16.2.0'
+  LLVM_MINGW_STABLE: '20261006'
+
+jobs:
+  resolve:
+    name: resolve compiler versions
+    runs-on: ubuntu-24.04
+    outputs:
+      gcc_toolchains: ${{ steps.r.outputs.gcc_toolchains }}
+      builds: ${{ steps.r.outputs.builds }}
+    steps:
+      - id: r
+        name: Pick the GCC snapshot and the build matrix
+        env:
+          SNAP: ${{ inputs.gcc_snapshot }}
+          STABLE: ${{ inputs.stable }}
+        run: |
+          set -euo pipefail
+          if [ -z "$SNAP" ]; then
+            SNAP=$(curl -fsSL --retry 5 https://gcc.gnu.org/pub/gcc/snapshots/LATEST-17/ | grep -oE 'gcc-17-[0-9]{8}' | head -1)
+          fi
+          test -n "$SNAP"
+          tc="{\"name\":\"gcc17\",\"ver\":\"$SNAP\",\"url\":\"https://gcc.gnu.org/pub/gcc/snapshots/${SNAP#gcc-}/$SNAP.tar.xz\"}"
+          comps="gcc17 clang-nightly"
+          if [ "$STABLE" = "true" ]; then
+            tc="$tc,{\"name\":\"gcc16\",\"ver\":\"$GCC_STABLE\",\"url\":\"https://gcc.gnu.org/pub/gcc/releases/$GCC_STABLE/$GCC_STABLE.tar.xz\"}"
+            comps="$comps gcc16 clang23"
+          fi
+          builds=""
+          for c in $comps; do for v in base avx2 avx2-lto; do
+            builds="$builds{\"compiler\":\"$c\",\"variant\":\"$v\"},"
+          done; done
+          echo "gcc_toolchains=[$tc]" >> "$GITHUB_OUTPUT"
+          echo "builds=[${builds%,}]" >> "$GITHUB_OUTPUT"
+          cat "$GITHUB_OUTPUT"
+
+      - name: Download llvm-mingw once (the nightly asset is replaced daily)
+        env:
+          STABLE: ${{ inputs.stable }}
+        run: |
+          set -euo pipefail
+          mkdir tc
+          curl -fsSL --retry 5 -o tc/llvm-mingw-clang-nightly.tar.xz \
+            https://github.com/mstorsjo/llvm-mingw/releases/download/nightly/llvm-mingw-nightly-ucrt-ubuntu-22.04-x86_64.tar.xz
+          if [ "$STABLE" = "true" ]; then
+            curl -fsSL --retry 5 -o tc/llvm-mingw-clang23.tar.xz \
+              https://github.com/mstorsjo/llvm-mingw/releases/download/$LLVM_MINGW_STABLE/llvm-mingw-$LLVM_MINGW_STABLE-ucrt-ubuntu-22.04-x86_64.tar.xz
+          fi
+          ls -l tc
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: tc-llvm-mingw
+          path: tc/
+          retention-days: 3
+          compression-level: 0
+
+  gcc-toolchain:
+    name: GCC cross toolchain (${{ matrix.tc.ver }})
+    needs: resolve
+    runs-on: ubuntu-24.04
+    timeout-minutes: 180
+    strategy:
+      matrix:
+        tc: ${{ fromJSON(needs.resolve.outputs.gcc_toolchains) }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - id: cache
+        uses: actions/cache@v4
+        with:
+          path: ~/tc/mingw-${{ matrix.tc.name }}
+          key: mingw-cross-${{ matrix.tc.ver }}-binutils${{ env.BINUTILS_VER }}-${{ env.MINGW_VER }}-${{ hashFiles('scripts/compiler-bench/build-gcc-mingw-cross.sh') }}
+
+      - name: Build the cross toolchain
+        if: steps.cache.outputs.cache-hit != 'true'
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends bison flex texinfo libgmp-dev libmpfr-dev libmpc-dev libisl-dev
+          WORK="$RUNNER_TEMP/gcc-work" bash scripts/compiler-bench/build-gcc-mingw-cross.sh \
+            "${{ matrix.tc.url }}" ~/tc/mingw-${{ matrix.tc.name }}
+
+      - name: Toolchain info
+        run: |
+          ~/tc/mingw-${{ matrix.tc.name }}/bin/x86_64-w64-mingw32-gcc -v 2>&1 | tail -3
+          du -sh ~/tc/mingw-${{ matrix.tc.name }}
+
+  build:
+    name: build ${{ matrix.compiler }}-${{ matrix.variant }}
+    needs: [resolve, gcc-toolchain]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        include: ${{ fromJSON(needs.resolve.outputs.builds) }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up JDK 8 (javah, jar)
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '8'
+
+      - name: Pin CMake 3.x (project predates CMake 4 / CMP0175)
+        uses: jwlawson/actions-setup-cmake@v2
+        with:
+          cmake-version: '3.28.6'
+
+      - name: Set up Ninja
+        uses: seanmiddleditch/gha-setup-ninja@v6
+
+      - name: GCC toolchain cache key
+        id: key
+        if: startsWith(matrix.compiler, 'gcc')
+        env:
+          TOOLCHAINS: ${{ needs.resolve.outputs.gcc_toolchains }}
+        run: |
+          VER=$(echo "$TOOLCHAINS" | jq -r '.[] | select(.name == "${{ matrix.compiler }}") | .ver')
+          echo "key=mingw-cross-$VER-binutils$BINUTILS_VER-$MINGW_VER-${{ hashFiles('scripts/compiler-bench/build-gcc-mingw-cross.sh') }}" >> "$GITHUB_OUTPUT"
+
+      - name: Restore the GCC cross toolchain
+        if: startsWith(matrix.compiler, 'gcc')
+        uses: actions/cache/restore@v4
+        with:
+          path: ~/tc/mingw-${{ matrix.compiler }}
+          key: ${{ steps.key.outputs.key }}
+          fail-on-cache-miss: true
+
+      - name: Get llvm-mingw
+        if: startsWith(matrix.compiler, 'clang')
+        uses: actions/download-artifact@v4
+        with:
+          name: tc-llvm-mingw
+          path: ${{ runner.temp }}/tc-dl
+
+      - name: Put the toolchain on PATH
+        run: |
+          set -euo pipefail
+          case "${{ matrix.compiler }}" in
+            gcc*)   echo ~/tc/mingw-${{ matrix.compiler }}/bin >> "$GITHUB_PATH" ;;
+            clang*) mkdir -p ~/tc/llvm-mingw
+                    tar -xJf "$RUNNER_TEMP/tc-dl/llvm-mingw-${{ matrix.compiler }}.tar.xz" -C ~/tc/llvm-mingw --strip-components=1
+                    echo ~/tc/llvm-mingw/bin >> "$GITHUB_PATH" ;;
+          esac
+
+      - name: Cross-build JNI DLL + 7zz.exe
+        run: |
+          set -euo pipefail
+          x86_64-w64-mingw32-gcc --version 2>/dev/null | head -1 || x86_64-w64-mingw32-clang --version | head -1
+          bash scripts/compiler-bench/build-variant.sh "${{ startsWith(matrix.compiler, 'gcc') && 'gcc' || 'clang' }}" \
+            ${{ matrix.variant }} dist/${{ matrix.compiler }}-${{ matrix.variant }}
+          cat dist/*/dll-compile-cmd.txt dist/*/7zz-compile-cmd.txt | cut -c1-2000
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: bin-${{ matrix.compiler }}-${{ matrix.variant }}
+          path: dist/${{ matrix.compiler }}-${{ matrix.variant }}/
+
+  test:
+    name: test ${{ matrix.compiler }}-${{ matrix.variant }}
+    needs: [resolve, build]
+    runs-on: windows-latest
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        include: ${{ fromJSON(needs.resolve.outputs.builds) }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up x64 JDK 8 (needs javah)
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '8'
+          architecture: x64
+
+      - name: Install MinGW-w64 GCC (MSYS2 MINGW64, only for the test harness)
+        id: msys2
+        uses: msys2/setup-msys2@v2
+        with:
+          msystem: MINGW64
+          update: false
+          install: mingw-w64-x86_64-gcc
+
+      - name: Put MinGW-w64 on PATH
+        shell: pwsh
+        run: |
+          "${{ steps.msys2.outputs.msys2-location }}\mingw64\bin" | Out-File -FilePath $env:GITHUB_PATH -Append -Encoding utf8
+
+      - name: Pin CMake 3.x
+        uses: jwlawson/actions-setup-cmake@v2
+        with:
+          cmake-version: '3.28.6'
+
+      - name: Set up Ninja
+        uses: seanmiddleditch/gha-setup-ninja@v6
+
+      # The JUnit harness (test jar, JUnitRunner.cmake) is built natively as in windows-x64.yml; its own
+      # native lib is then replaced by the cross-built one under test.
+      - name: Build the test harness
+        shell: bash
+        run: |
+          set -eux
+          mkdir build && cd build
+          cmake .. -G Ninja -DCMAKE_POLICY_VERSION_MINIMUM=3.5 -DMINGW64=Yes \
+            -DJAVA_SYSTEM=Windows -DJAVA_ARCH=amd64 \
+            -DCMAKE_C_COMPILER=x86_64-w64-mingw32-gcc -DCMAKE_CXX_COMPILER=x86_64-w64-mingw32-g++ \
+            -DCMAKE_SHARED_LINKER_FLAGS=-static -DCMAKE_BUILD_TYPE=Release -DJAVA_JDK="$JAVA_HOME" > /dev/null
+          cmake --build . -j
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: bin-${{ matrix.compiler }}-${{ matrix.variant }}
+          path: xbuild
+
+      - name: Verify the DLL (x86-64 PE, no MinGW runtime DLL imports) and swap it into the harness
+        shell: bash
+        run: |
+          set -eux
+          cat xbuild/info.txt
+          DLL=$(ls xbuild/*7-Zip-JBinding.dll)
+          objdump -f "$DLL" | grep -E 'file format pei-x86-64'
+          objdump -p "$DLL" | grep 'DLL Name'
+          if objdump -p "$DLL" | grep -iE 'DLL Name: *lib[^ ]*\.dll'; then
+            echo "::error::$DLL depends on a MinGW runtime DLL"; exit 1
+          fi
+          XJAR="$(cygpath -m "$PWD/xbuild/sevenzipjbinding-Windows-amd64.jar")"
+          sed -i -E "s#[^;\"]*/sevenzipjbinding-Windows-amd64\.jar#${XJAR}#g" build/JUnitRunner.cmake
+          mv build/sevenzipjbinding-Windows-amd64.jar build/harness-native-lib.jar.unused
+          grep -o '[^;"]*/sevenzipjbinding-Windows-amd64\.jar' build/JUnitRunner.cmake | sort -u | tee /dev/stderr | grep -qx "$XJAR"
+          test "$(grep -o '[^;"]*/sevenzipjbinding-Windows-amd64\.jar' build/JUnitRunner.cmake | sort -u | wc -l)" = 1
+
+      - name: Run tests (ctest, native x64 JVM, cross-built native lib)
+        shell: bash
+        run: cd build && ctest --output-on-failure
+
+  bench:
+    name: benchmark (all builds, one runner)
+    needs: [resolve, build]
+    runs-on: windows-latest
+    timeout-minutes: 300
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up x64 JDK 8
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '8'
+          architecture: x64
+
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: bin-*
+          path: dist
+
+      - name: Prepare builds, JniBench and the JNI corpus
+        shell: bash
+        run: |
+          set -eux
+          for d in dist/bin-*; do mv "$d" "dist/${d#dist/bin-}"; done
+          for d in dist/*/; do echo "== $d"; cat "$d/info.txt"; done
+          FIRST=$(ls -d dist/*/ | head -1)
+          javac -cp "$FIRST/sevenzipjbinding.jar" -d jniclasses scripts/compiler-bench/JniBench.java
+          # corpus: 7-Zip sources (text) + Windows system DLLs (binary), capped by JniBench
+          mkdir -p corpus/bin
+          find /c/Windows/System32 -maxdepth 1 -iname '*.dll' -size +200k -size -2M | sort | head -40 \
+            | while read -r f; do cp "$f" corpus/bin/ || true; done
+          du -sh 7zip corpus/bin
+
+      - name: Benchmark
+        shell: bash
+        env:
+          ROUNDS: ${{ inputs.rounds || '7' }}
+        run: |
+          python scripts/compiler-bench/bench.py --builds-dir dist --rounds "$ROUNDS" \
+            --jni-classes jniclasses --corpus 7zip corpus/bin --corpus-mib 32 --out bench-results
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: bench-results
+          path: bench-results/

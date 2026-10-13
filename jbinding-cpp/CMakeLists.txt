@@ -96,7 +96,12 @@ ELSE()
         -DNDEBUG
     )
 
-    IF(APPLE)
+    # These land after CMAKE_<LANG>_FLAGS(_RELEASE) on the compile line, so an -O level passed there is
+    # overridden; OPTIMIZATION_FLAGS (root CMakeLists.txt) replaces the default instead.
+    IF(OPTIMIZATION_FLAGS)
+        SEPARATE_ARGUMENTS(_OPTIMIZATION_FLAGS UNIX_COMMAND "${OPTIMIZATION_FLAGS}")
+        add_definitions( ${_OPTIMIZATION_FLAGS} )
+    ELSEIF(APPLE)
         add_definitions( -O )
     ELSE()
         add_definitions( -O2 )

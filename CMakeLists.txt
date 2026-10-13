@@ -13,6 +13,7 @@ SET(MINGW32     No CACHE BOOL "Use MinGW toolchain (32 bit)")
 SET(MINGW64     No CACHE BOOL "Use MinGW toolchain (64 bit)")
 SET(MINGWARM64  No CACHE BOOL "Use llvm-mingw toolchain (Windows on Arm, aarch64)")
 SET(RUNTIME_LIB CACHE BOOL "Compiler runtime library to package and load before 7-Zip-JBinding")
+SET(OPTIMIZATION_FLAGS "" CACHE STRING "Release optimization flags replacing the default -O2 (-O on macOS), e.g. \"-O3\". Arch/LTO flags go to CMAKE_C_FLAGS/CMAKE_CXX_FLAGS")
 
 SET(JAVA_TMP       CACHE PATH "Path to tmp directory")
 SET(JAVA_PARAMS    CACHE STRING "Additional parameters for java")
