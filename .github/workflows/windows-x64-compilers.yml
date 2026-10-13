@@ -318,7 +318,8 @@ jobs:
   bench:
     name: benchmark (all builds, one runner)
     needs: [resolve, build]
-    if: ${{ !cancelled() && inputs.bench != false }}   # benchmark whatever built
+    # benchmark whatever built; inputs.bench is null outside workflow_call and null == false in expressions
+    if: ${{ !cancelled() && format('{0}', inputs.bench) != 'false' }}
     runs-on: windows-latest
     timeout-minutes: 300
     steps:
