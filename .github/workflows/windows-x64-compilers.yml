@@ -198,8 +198,7 @@ jobs:
             ${{ matrix.variant }} dist/${{ matrix.compiler }}-${{ matrix.variant }}
           # effective optimization flags, in command-line order (the last -O wins)
           for f in dist/*/dll-compile-cmd.txt dist/*/7zz-compile-cmd.txt; do
-            echo "$(basename "$f"): $(grep -oE -- ' -(O[0-3s]?|march=[^ ]+|flto[^ ]*|ffast-math|fno-devirtualize-speculatively)( |$)' "$f" | tr -d '
-')"
+            echo "$(basename "$f"): $(grep -oE -- ' -(O[0-3s]?|march=[^ ]+|flto[^ ]*|ffast-math|fno-devirtualize-speculatively)( |$)' "$f" | tr -d '\n')"
           done
 
       - uses: actions/upload-artifact@v4
