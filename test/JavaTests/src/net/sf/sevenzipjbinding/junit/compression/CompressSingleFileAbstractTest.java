@@ -7,6 +7,8 @@ import static org.junit.Assert.assertTrue;
 import java.util.Arrays;
 import java.util.Collection;
 import java.util.Date;
+import java.util.HashSet;
+import java.util.Set;
 
 import org.junit.Assert;
 import org.junit.Test;
@@ -311,6 +313,16 @@ public abstract class CompressSingleFileAbstractTest<C extends AbstractTestConte
         return testContextTL.get();
     }
 
+    /**
+     * The "size:entropy" pairs the DEFAULT and MINIMAL profiles run: the 0/1/2-byte edge cases, one size per magnitude
+     * with low, partial and full entropy, and one size above 100000 bytes (needed for the all-callback-methods-called
+     * check). The full grid below (incl. 3 MB and the &gt;= 20 MB sizes) runs only with the long-running STRESS
+     * profile.
+     */
+    private static final Set<String> SHORT_RUN_PARAMETERS = new HashSet<String>(Arrays.asList( //
+            "0:0", "1:0", "2:0", "10:10", "57:5", "277:20", //
+            "1000:0", "1000:50", "1000:1000", "5000:100", "20000:200", "400000:300"));
+
     @Parameters
     public static Collection<Object[]> getParameters() {
         return Arrays.asList(new Object[][] { { 0, 0 }, //
@@ -372,10 +384,10 @@ public abstract class CompressSingleFileAbstractTest<C extends AbstractTestConte
         if (TestConfiguration.getCurrent().isOnLowMemory()) {
             return size >= 100000;
         }
-        if (size >= 20000000) {
-            return !TestConfiguration.getCurrent().isLongRunning();
+        if (TestConfiguration.getCurrent().isLongRunning()) {
+            return false;
         }
-        return false;
+        return !SHORT_RUN_PARAMETERS.contains(size + ":" + entropy);
     }
 
     protected CompressSingleFileAbstractTest(int size, int entropy) {

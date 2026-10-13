@@ -87,7 +87,8 @@ public abstract class CompressMultipleFileAbstractTest
     @ParameterIgnores
     public static boolean isParameterIgnores(int countOfFiles, int directoriesDepth, int maxSubdirectories,
             int averageFileLength, int deltaFileLength, boolean forbiddenRootDirectory) {
-        if (TestConfiguration.getCurrent().isOnLowMemory()) {
+        // The two multi-MB sets (10 x 450 KB, 50 x 80 KB) run only with the full (STRESS) test data
+        if (TestConfiguration.getCurrent().isReducedTestData()) {
             return averageFileLength >= 10000;
         }
         return false;

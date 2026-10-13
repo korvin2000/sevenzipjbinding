@@ -87,7 +87,8 @@ public class TestConfiguration {
     private static final TestConfiguration[] PROFILES = new TestConfiguration[] { //
         /*                    name       | thread# | repeatSingle | repeatMultiple | timeout | longRun | trace | randomArchives */
         new TestConfiguration(PR_MINUMAL,         2,             1,               0,      300,   false,   true,        1), //
-        new TestConfiguration(PR_DEFAULT,         2,             2,               2,      600,   false,   true,       20), //
+        // DEFAULT (ctest/CI): one run per test; repetition is what the STRESS profile is for.
+        new TestConfiguration(PR_DEFAULT,         2,             1,               1,      600,   false,   true,       20), //
         new TestConfiguration(PR_STRESS ,        15,            10,              10,     1200,   true,   false,     1000)  //
     };
     // @formatter:off
@@ -199,6 +200,14 @@ public class TestConfiguration {
 
     public boolean isOnLowMemory() {
         return onLowMemory;
+    }
+
+    /**
+     * Use the small test-data variants (the ones also used on low memory): true in every profile except the
+     * long-running STRESS one, so ctest/CI stays fast while STRESS keeps the full data sizes.
+     */
+    public boolean isReducedTestData() {
+        return onLowMemory || !longRunning;
     }
 
     /**

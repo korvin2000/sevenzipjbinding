@@ -35,7 +35,7 @@ public class CompressFeatureSetLevel extends CompressFeatureAbstractSingleFile<V
     private final int level;
 
     private int getDataSize() {
-        if (TestConfiguration.getCurrent().isOnLowMemory()) {
+        if (TestConfiguration.getCurrent().isReducedTestData()) {
             return DATA_SIZE_LOW_MEMORY;
         }
         return DATA_SIZE;

@@ -25,6 +25,7 @@ import net.sf.sevenzipjbinding.ISequentialOutStream;
 import net.sf.sevenzipjbinding.PropID;
 import net.sf.sevenzipjbinding.SevenZipException;
 import net.sf.sevenzipjbinding.junit.ExtractFileAbstractTest;
+import net.sf.sevenzipjbinding.junit.junittools.annotations.LongRunning;
 import net.sf.sevenzipjbinding.junit.junittools.annotations.Multithreaded;
 import net.sf.sevenzipjbinding.junit.junittools.annotations.Repeat;
 
@@ -93,86 +94,82 @@ public abstract class ExtractSingleFileAbstractTest extends ExtractFileAbstractT
 		super(archiveFormat, extention, compression1, compression2, compression3);
 	}
 
-    @Test
-    @Multithreaded
-    @Repeat
+	@Test
+	@Multithreaded
+	@Repeat
 	public void test4Compression1() throws Exception {
 		testArchiveExtraction(4, compression1, false, false);
 	}
 
-    @Test
-    @Multithreaded
-    @Repeat
+	@Test
+	@Repeat
 	public void test4Compression1FormatAutodetect() throws Exception {
 		testArchiveExtraction(4, compression1, true, false);
 	}
 
-    @Test
-    @Multithreaded
-    @Repeat
+	@Test
+	@LongRunning
+	@Repeat
 	public void test4Compression2() throws Exception {
 		testArchiveExtraction(4, compression2, false, false);
 	}
 
-    @Test
-    @Multithreaded
-    @Repeat
+	@Test
+	@LongRunning
+	@Repeat
 	public void test4Compression2FormatAutodetect() throws Exception {
 		testArchiveExtraction(4, compression2, true, false);
 	}
 
-    @Test
-    @Multithreaded
-    @Repeat
+	@Test
+	@Repeat
 	public void test4Compression3() throws Exception {
 		testArchiveExtraction(4, compression3, false, false);
 	}
 
-    @Test
-    @Multithreaded
-    @Repeat
+	@Test
+	@LongRunning
+	@Repeat
 	public void test4Compression3FormatAutodetect() throws Exception {
 		testArchiveExtraction(4, compression3, true, false);
 	}
 
-    @Test
-    @Multithreaded
-    @Repeat
+	@Test
+	@Multithreaded
+	@Repeat
 	public void test5Compression1() throws Exception {
 		testArchiveExtraction(5, compression1, false, false);
 	}
 
-    @Test
-    @Multithreaded
-    @Repeat
+	@Test
+	@Repeat
 	public void test5Compression1FormatAutodetect() throws Exception {
 		testArchiveExtraction(5, compression1, true, false);
 	}
 
-    @Test
-    @Multithreaded
-    @Repeat
+	@Test
+	@LongRunning
+	@Repeat
 	public void test5Compression2() throws Exception {
 		testArchiveExtraction(5, compression2, false, false);
 	}
 
-    @Test
-    @Multithreaded
-    @Repeat
+	@Test
+	@LongRunning
+	@Repeat
 	public void test5Compression2FormatAutodetect() throws Exception {
 		testArchiveExtraction(5, compression2, true, false);
 	}
 
-    @Test
-    @Multithreaded
-    @Repeat
+	@Test
+	@Repeat
 	public void test5Compression3() throws Exception {
 		testArchiveExtraction(5, compression3, false, false);
 	}
 
-    @Test
-    @Multithreaded
-    @Repeat
+	@Test
+	@LongRunning
+	@Repeat
 	public void test5Compression3FormatAutodetect() throws Exception {
 		testArchiveExtraction(5, compression3, true, false);
 	}

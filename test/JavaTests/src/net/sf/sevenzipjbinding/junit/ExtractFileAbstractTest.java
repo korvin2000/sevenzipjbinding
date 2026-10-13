@@ -33,6 +33,7 @@ import net.sf.sevenzipjbinding.SevenZipException;
 import net.sf.sevenzipjbinding.impl.RandomAccessFileInStream;
 import net.sf.sevenzipjbinding.impl.VolumedArchiveInStream;
 import net.sf.sevenzipjbinding.junit.ExtractFileAbstractTest.ExtractFileAbstractTestContext;
+import net.sf.sevenzipjbinding.junit.junittools.annotations.LongRunning;
 import net.sf.sevenzipjbinding.junit.junittools.annotations.Multithreaded;
 import net.sf.sevenzipjbinding.junit.junittools.annotations.Repeat;
 import net.sf.sevenzipjbinding.junit.tools.ZipInStream;
@@ -153,35 +154,33 @@ public abstract class ExtractFileAbstractTest extends JUnitNativeTestBase<Extrac
     }
 
     @Test
-    @Multithreaded
     @Repeat
     public void test1Compression1FormatAutodetect() throws Exception {
         testArchiveExtraction(1, compression1, true, false);
     }
 
     @Test
-    @Multithreaded
+    @LongRunning
     @Repeat
     public void test1Compression2() throws Exception {
         testArchiveExtraction(1, compression2, false, false);
     }
 
     @Test
-    @Multithreaded
+    @LongRunning
     @Repeat
     public void test1Compression2FormatAutodetect() throws Exception {
         testArchiveExtraction(1, compression2, true, false);
     }
 
     @Test
-    @Multithreaded
     @Repeat
     public void test1Compression3() throws Exception {
         testArchiveExtraction(1, compression3, false, false);
     }
 
     @Test
-    @Multithreaded
+    @LongRunning
     @Repeat
     public void test1Compression3FormatAutodetect() throws Exception {
         testArchiveExtraction(1, compression3, true, false);
@@ -195,35 +194,33 @@ public abstract class ExtractFileAbstractTest extends JUnitNativeTestBase<Extrac
     }
 
     @Test
-    @Multithreaded
     @Repeat
     public void test2Compression1FormatAutodetect() throws Exception {
         testArchiveExtraction(2, compression1, true, false);
     }
 
     @Test
-    @Multithreaded
+    @LongRunning
     @Repeat
     public void test2Compression2() throws Exception {
         testArchiveExtraction(2, compression2, false, false);
     }
 
     @Test
-    @Multithreaded
+    @LongRunning
     @Repeat
     public void test2Compression2FormatAutodetect() throws Exception {
         testArchiveExtraction(2, compression2, true, false);
     }
 
     @Test
-    @Multithreaded
     @Repeat
     public void test2Compression3() throws Exception {
         testArchiveExtraction(2, compression3, false, false);
     }
 
     @Test
-    @Multithreaded
+    @LongRunning
     @Repeat
     public void test2Compression3FormatAutodetect() throws Exception {
         testArchiveExtraction(2, compression3, true, false);
@@ -237,35 +234,33 @@ public abstract class ExtractFileAbstractTest extends JUnitNativeTestBase<Extrac
     }
 
     @Test
-    @Multithreaded
     @Repeat
     public void test3Compression1FormatAutodetect() throws Exception {
         testArchiveExtraction(3, compression1, true, false);
     }
 
     @Test
-    @Multithreaded
+    @LongRunning
     @Repeat
     public void test3Compression2() throws Exception {
         testArchiveExtraction(3, compression2, false, false);
     }
 
     @Test
-    @Multithreaded
+    @LongRunning
     @Repeat
     public void test3Compression2FormatAutodetect() throws Exception {
         testArchiveExtraction(3, compression2, true, false);
     }
 
     @Test
-    @Multithreaded
     @Repeat
     public void test3Compression3() throws Exception {
         testArchiveExtraction(3, compression3, false, false);
     }
 
     @Test
-    @Multithreaded
+    @LongRunning
     @Repeat
     public void test3Compression3FormatAutodetect() throws Exception {
         testArchiveExtraction(3, compression3, true, false);

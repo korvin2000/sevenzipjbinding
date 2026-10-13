@@ -59,14 +59,14 @@ public abstract class UpdateMultipleFilesAbstractTest<T extends IOutItemBase> ex
             new DirectoryTreeConfiguration(64, 5, 2, 1000, 500);
 
     DirectoryTreeConfiguration getConfDeep() {
-        if (TestConfiguration.getCurrent().isOnLowMemory()) {
+        if (TestConfiguration.getCurrent().isReducedTestData()) {
             return CONF_DEEP_LOW_MEMORY;
         }
         return CONF_DEEP;
     }
 
     DirectoryTreeConfiguration getConfFlat() {
-        if (TestConfiguration.getCurrent().isOnLowMemory()) {
+        if (TestConfiguration.getCurrent().isReducedTestData()) {
             return CONF_FLAT_LOW_MEMORY;
         }
         return CONF_FLAT;
