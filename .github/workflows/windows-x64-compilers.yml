@@ -198,7 +198,7 @@ jobs:
             ${{ matrix.variant }} dist/${{ matrix.compiler }}-${{ matrix.variant }}
           # effective optimization flags, in command-line order (the last -O wins)
           for f in dist/*/dll-compile-cmd.txt dist/*/7zz-compile-cmd.txt; do
-            echo "$(basename "$f"): $(grep -oE -- ' -(O[0-3s]?|march=[^ ]+|flto[^ ]*|ffast-math|fno-devirtualize-speculatively)( |$)' "$f" | tr -d '\n')"
+            echo "$(basename "$f"): $(grep -oE -- ' -(O[0-3s]?|march=[^ ]+|flto[^ ]*|ffast-math|fno-devirtualize-speculatively)' "$f" | tr -d '\n')"
           done
 
       - uses: actions/upload-artifact@v4
@@ -279,8 +279,10 @@ jobs:
           XJAR="$(cygpath -m "$PWD/xbuild/sevenzipjbinding-Windows-amd64.jar")"
           sed -i -E "s#[^;\"]*/sevenzipjbinding-Windows-amd64\.jar#${XJAR}#g" build/JUnitRunner.cmake
           mv build/sevenzipjbinding-Windows-amd64.jar build/harness-native-lib.jar.unused
-          grep -o '[^;"]*/sevenzipjbinding-Windows-amd64\.jar' build/JUnitRunner.cmake | sort -u | tee /dev/stderr | grep -qx "$XJAR"
-          test "$(grep -o '[^;"]*/sevenzipjbinding-Windows-amd64\.jar' build/JUnitRunner.cmake | sort -u | wc -l)" = 1
+          # the runner must reference exactly one platform jar: the cross-built one
+          JARS=$(grep -o '[^;"]*/sevenzipjbinding-Windows-amd64\.jar' build/JUnitRunner.cmake | sort -u)
+          echo "$JARS"
+          test "$JARS" = "$XJAR"
 
       - name: Run tests (ctest, native x64 JVM, cross-built native lib)
         shell: bash
@@ -314,6 +316,7 @@ jobs:
           for d in dist/bin-*; do mv "$d" "dist/${d#dist/bin-}"; done
           for d in dist/*/; do echo "== $d"; cat "$d/info.txt"; done
           FIRST=$(ls -d dist/*/ | head -1)
+          mkdir -p jniclasses   # JDK 8 javac does not create the -d directory
           javac -cp "$FIRST/sevenzipjbinding.jar" -d jniclasses scripts/compiler-bench/JniBench.java
           # corpus: 7-Zip sources (text) + Windows system DLLs (binary), capped by JniBench
           mkdir -p corpus/bin
